@@ -5,6 +5,8 @@ Automated PDF/UA tagging with an Acrobat-style manual editor:
 """
 from __future__ import annotations
 
+import collections
+import contextlib
 import io
 import json
 import os
@@ -21,7 +23,7 @@ from dataclasses import asdict
 from datetime import datetime
 
 import pymupdf
-from flask import (Flask, abort, g, jsonify, redirect, render_template, request,
+from flask import (Flask, abort, g, has_request_context, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
 from werkzeug.utils import secure_filename
 
@@ -43,10 +45,12 @@ from core.pipeline import (COLOUR_BACKUP, CONTRAST_BACKUP, save_auto_model, undo
 from core.importer import assess_tags
 from core.textflags import printed_text
 from core.jobrunner import JobFailed, JobStopped, run_task
+from core.fairqueue import FairQueue
+from core.locks import FairRLock, replace_file
 from core.preflight import tesseract_info
 from core.report import write_batch_summary
 
-VERSION = "4.27.0"
+VERSION = "4.28.0"
 BASE = os.path.dirname(os.path.abspath(__file__))
 JOBS = os.environ.get("PDFUA_JOBS", os.path.join(BASE, "jobs"))
 CONFIG_PATH = os.environ.get("PDFUA_CONFIG", os.path.join(BASE, "config.json"))
@@ -294,8 +298,9 @@ OLD_DEFAULT_PROFILES = (None, "", "Default", BEST_PROFILE, "Academain")
 # what the sample files do (V4.21): Admin → Sample files → Learning
 # V4.25: brain — the self-learning brain decides the text tags of profiles that use it ·
 # feedback — every built file's fixes teach it · ai_study — the AI studies each sample
+# V4.28: zones — where a zone is cut (a paragraph break) is learned from what people change
 LEARNING_DEFAULTS = {"enabled": True, "auto_approved": True, "use_ai": True, "rules": True,
-                     "brain": True, "feedback": True, "ai_study": True}
+                     "brain": True, "feedback": True, "ai_study": True, "zones": True}
 
 
 def learning_cfg() -> dict:
@@ -311,6 +316,8 @@ def load_config() -> dict:
             with open(CONFIG_PATH, encoding="utf-8") as fh:
                 saved = json.load(fh)
             cfg.update({k: v for k, v in saved.items() if k in cfg})
+            for k, v in saved.items():
+                cfg.setdefault(k, v)       # V4.28: "templates", "privacy" … stay when anything else is saved
             cfg["ai"] = {**AIConfig().to_dict(), **SITE_AI, **(saved.get("ai") or {})}
             if int(saved.get("site_defaults") or 0) < SITE_DEFAULTS_VERSION:
                 # once: the AI on, 600 s to answer, 5 files at a time on 10 cores
@@ -334,11 +341,33 @@ def load_config() -> dict:
     return cfg
 
 
+# V4.28: many people, several of them admins, change settings at the same time. Every change of
+# config.json is "read it, change it, write it back" — done as one step (`config_edit`), so one
+# person's change never wipes out another's — and written through a temporary file of its own.
+# This lock is a leaf: nothing else is ever waited for while holding it.
+CONFIG_LOCK = threading.RLock()
+
+
 def save_config(cfg: dict) -> None:
-    tmp = CONFIG_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(cfg, fh, indent=2)
-    os.replace(tmp, CONFIG_PATH)
+    tmp = f"{CONFIG_PATH}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2)
+        replace_file(tmp, CONFIG_PATH)
+    finally:
+        try:
+            os.remove(tmp)                  # only still there when the replace failed
+        except OSError:
+            pass
+
+
+@contextlib.contextmanager
+def config_edit():
+    """`with config_edit() as cfg:` — the settings, changed and written back as one step."""
+    with CONFIG_LOCK:
+        cfg = load_config()
+        yield cfg
+        save_config(cfg)
 
 
 def ai_cfg() -> AIConfig:
@@ -352,12 +381,230 @@ def all_profiles() -> dict:
     return out
 
 
-# ============================================ one PyMuPDF user at a time
+# ============================================ one PyMuPDF user at a time — and nobody else waits (V4.28)
 # MuPDF is not thread-safe: editor requests that open PDFs (page images, crops,
 # zones, re-tag, contrast) run one after another. Long jobs run in their own
 # process (core/jobrunner.py) so they never wait for this lock.
-MUPDF_LOCK = threading.RLock()
+#
+# V4.28, for many people at the same time. Before, EVERY request about a file took this one lock —
+# a person's page picture made everybody else's "which tag is this" wait for it. Now a request
+# waits only for what it needs:
+#   * a request that only reads or changes the tags (no PDF: the tag list, the issues, setting a
+#     tag, moving one, undo …) waits for its own file only — people working on other files, or
+#     rendering a page, do not slow it down;
+#   * a page picture that was drawn before is a file read (no lock at all); the geometry of the
+#     pages the tag list needs is remembered while the PDF stays the same;
+#   * everything else takes the MuPDF lock as before — in the order they came (FairRLock), so none
+#     waits for ever while others pass it; and what a request waits for is counted (Admin → System).
+# The lock order is always MuPDF first, then the file's: nobody holds the file's lock and waits for
+# MuPDF, so the two can never wait for each other.
+MUPDF_LOCK = FairRLock()
 _NO_LOCK = ("/status", "/stop")
+# requests that read or change the tags of a file and never open its PDF
+PURE_EDITS = {"api_node", "api_move", "api_levels", "api_bulk", "api_order", "api_undo", "api_actual_text",
+              "api_headers_fix", "api_order_fix"}
+PURE_READS = {"api_job_summary", "api_findings", "api_job_info", "api_lint", "api_job_brain",
+              "api_actualtext_tags", "api_zones_similar", "api_job_wf"}
+_req_locks: dict[str, FairRLock] = {}
+_req_guard = threading.Lock()
+LOCK_AUDIT = os.environ.get("PDFUA_LOCK_AUDIT", "") == "1"      # tests: a request that opens a PDF unlocked fails
+LOCK_NOTES: dict[str, int] = {}
+
+
+def req_lock(jid: str) -> FairRLock:
+    """What a request about one file holds while it reads or changes that file's tags."""
+    with _req_guard:
+        lk = _req_locks.get(jid)
+        if lk is None:
+            lk = _req_locks[jid] = FairRLock()
+        return lk
+
+
+_JOB_FLAGS: dict[str, tuple] = {}
+
+
+def _job_is_house(jid: str) -> bool:
+    """A job with a client house style: an edit also reads its PDF (core/house.py)."""
+    p = os.path.join(JOBS, secure_filename(jid), "meta.json")
+    try:
+        mt = os.path.getmtime(p)
+    except OSError:
+        return True
+    hit = _JOB_FLAGS.get(jid)
+    if hit and hit[0] == mt:
+        return hit[1]
+    try:
+        with open(p, encoding="utf-8") as fh:
+            meta = json.load(fh)
+        house = (str((meta.get("options") or {}).get("house_style") or "").strip().lower() not in ("", "none", "off"))
+    except Exception:
+        house = True
+    _JOB_FLAGS[jid] = (mt, house)
+    return house
+
+
+_geom: dict[str, tuple] = {}
+
+
+def _pdf_key(path: str):
+    try:
+        st = os.stat(path)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _geometry_cached(jid: str) -> bool:
+    hit = _geom.get(jid)
+    return bool(hit and hit[0] == _pdf_key(os.path.join(JOBS, secure_filename(jid), "working.pdf")))
+
+
+def page_geometry(jid: str):
+    """(display matrices, page sizes) of the job's working PDF — read once, kept while the file stays
+    the same (an editor load used to open the PDF for it every time). Opens the PDF when it is not
+    kept: the caller then holds the MuPDF lock."""
+    path = os.path.join(job_dir(jid), "working.pdf")
+    key = _pdf_key(path)
+    hit = _geom.get(jid)
+    if hit and hit[0] == key:
+        return hit[1], hit[2]
+    doc = pymupdf.open(path)
+    try:
+        mats = [tuple(edit.display_matrix(p)) for p in doc]
+        sizes = [[round(p.rect.width, 2), round(p.rect.height, 2)] for p in doc]
+    finally:
+        doc.close()
+    _geom[jid] = (key, mats, sizes)
+    return mats, sizes
+
+
+def _page_zoom(default: float = 1.5) -> float:
+    try:
+        z = float(request.args.get("z", default))
+    except ValueError:
+        z = default
+    return round(min(max(z, 0.2), 8.0), 2)
+
+
+def _page_source(jid: str) -> str:
+    src = "accessible.pdf" if request.args.get("v") == "out" else "working.pdf"
+    if not os.path.exists(os.path.join(job_dir(jid), src)):
+        src = "original.pdf"
+    return src
+
+
+def _page_cache_file(jid: str, pno: int, zoom: float, src: str) -> str | None:
+    key = _pdf_key(os.path.join(JOBS, secure_filename(jid), src))
+    if key is None:
+        return None
+    return os.path.join(JOBS, secure_filename(jid), "cache", f"p{pno}_{src[:3]}_{int(round(zoom * 100))}_{key[0]}.png")
+
+
+def _lock_plan() -> tuple[bool, bool, str]:
+    """(needs the MuPDF lock, needs its file's lock, the file) for this request."""
+    p = request.path
+    if not (p.startswith("/api/job/") or p.startswith("/job/")) or p.endswith(_NO_LOCK) or p.endswith("/delete"):
+        return False, False, ""
+    ep = request.endpoint or ""
+    jid = (request.view_args or {}).get("jid", "")
+    if not jid:
+        return True, False, ""
+    try:
+        if ep == "api_presence":
+            return False, False, jid                  # who is here: a few bytes of memory, waits for nobody
+        if ep == "page_png":
+            f = _page_cache_file(jid, int((request.view_args or {}).get("pno", 0)), _page_zoom(), _page_source(jid))
+            if f and os.path.exists(f):
+                return False, False, jid               # drawn before: a file read
+            return True, False, jid
+        if ep == "api_model":
+            m = get_model(jid)
+            cold = not m.info.get("cell_zones_checked") and any(
+                n.role in ("TD", "TH") and n.bbox is None for n in m.nodes.values())
+            if _geometry_cached(jid) and not cold and not _job_is_house(jid):
+                return False, True, jid
+            return True, True, jid
+        if (ep in PURE_EDITS or (ep in PURE_READS and request.method == "GET")) and not _job_is_house(jid):
+            return False, True, jid
+    except Exception:
+        pass
+    return True, True, jid
+
+
+@app.before_request
+def _mupdf_lock_acquire():
+    mupdf, job, jid = _lock_plan()
+    g.locks = []
+    g.lock_plan = (("mupdf " if mupdf else "") + ("file" if job else "")).strip() or "none"
+    if mupdf:
+        MUPDF_LOCK.acquire()
+        g.locks.append(MUPDF_LOCK)
+    if job and jid:
+        lk = req_lock(jid)
+        lk.acquire()
+        g.locks.append(lk)
+        g.req_lock = lk
+
+
+@app.teardown_request
+def _mupdf_lock_release(exc=None):
+    for lk in reversed(g.pop("locks", None) or []):
+        try:
+            lk.release()
+        except RuntimeError:
+            pass
+
+
+@contextmanager
+def _mupdf_free_while_waiting():
+    """Let go of the MuPDF lock — and of this request's file lock — while this thread only waits
+    for Ollama, so a zone the model is reading (up to the 600 s timeout) does not freeze every
+    other page of the editor. The locks are taken back (MuPDF first) before the PDF or the tags
+    are used again."""
+    held: list = []
+    try:
+        rl = g.get("req_lock") if has_request_context() else None
+    except Exception:
+        rl = None
+    for lk in ([rl] if rl is not None else []) + [MUPDF_LOCK]:     # the file's first, MuPDF last
+        n = 0
+        try:
+            while True:
+                lk.release()
+                n += 1
+        except RuntimeError:              # not (or no longer) held by this thread
+            pass
+        if n:
+            held.append((lk, n))
+    try:
+        yield
+    finally:
+        for lk, n in sorted(held, key=lambda t: t[0] is not MUPDF_LOCK):   # MuPDF first
+            for _ in range(n):
+                lk.acquire()
+
+
+set_wait_hook(_mupdf_free_while_waiting)
+
+
+def _guarded_open(*a, **k):
+    """`pymupdf.open` in a request that did not take the MuPDF lock: take it now (it never should
+    happen — the request was thought to need no PDF; a note says which one), or, in the tests, fail."""
+    if has_request_context() and not MUPDF_LOCK._is_owned():
+        ep = request.endpoint or "?"
+        LOCK_NOTES[ep] = LOCK_NOTES.get(ep, 0) + 1
+        if LOCK_AUDIT:
+            raise RuntimeError(f"{ep} opened a PDF without the MuPDF lock")
+        if not MUPDF_LOCK.acquire(timeout=60):
+            raise RuntimeError("the PDF is busy — try again in a moment")
+        g.locks = [MUPDF_LOCK] + list(g.get("locks") or [])      # released with the request
+        if LOCK_NOTES[ep] == 1:
+            app.logger.warning("%s opened a PDF without the MuPDF lock (now taken)", ep)
+    return _real_open(*a, **k)
+
+
+_real_open = pymupdf.open
+pymupdf.open = _guarded_open
 
 
 # the static files' own date: a browser never keeps last version's editor.js
@@ -368,43 +615,6 @@ ASSET_V = str(int(max([os.path.getmtime(os.path.join(app.static_folder, f))
 @app.context_processor
 def _asset_version():
     return {"asset_v": ASSET_V, "app_version": VERSION}
-
-
-@app.before_request
-def _mupdf_lock_acquire():
-    p = request.path
-    if (p.startswith("/api/job/") or p.startswith("/job/")) and not p.endswith(_NO_LOCK) \
-            and not p.endswith("/delete"):
-        MUPDF_LOCK.acquire()
-        g.mupdf_locked = True
-
-
-@app.teardown_request
-def _mupdf_lock_release(exc=None):
-    if g.pop("mupdf_locked", False):
-        MUPDF_LOCK.release()
-
-
-@contextmanager
-def _mupdf_free_while_waiting():
-    """Let go of the MuPDF lock while this thread only waits for Ollama, so a
-    zone the model is reading (up to the 600 s timeout) does not freeze every
-    other page of the editor. The lock is taken back before MuPDF is used again."""
-    held = 0
-    try:
-        while True:
-            MUPDF_LOCK.release()
-            held += 1
-    except RuntimeError:              # not (or no longer) held by this thread
-        pass
-    try:
-        yield
-    finally:
-        for _ in range(held):
-            MUPDF_LOCK.acquire()
-
-
-set_wait_hook(_mupdf_free_while_waiting)
 
 
 # ================================================================ jobs
@@ -433,9 +643,10 @@ def read_meta(jid: str) -> dict:
 
 def write_meta(jid: str, meta: dict) -> None:
     p = os.path.join(job_dir(jid), "meta.json")
-    with open(p + ".tmp", "w", encoding="utf-8") as fh:
+    tmp = f"{p}.{os.getpid()}.{threading.get_ident()}.tmp"      # V4.28: never one temporary file for two writers
+    with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=1, ensure_ascii=False, default=str)
-    os.replace(p + ".tmp", p)
+    replace_file(tmp, p)
 
 
 def update_meta(jid: str, **kw) -> dict:
@@ -448,6 +659,11 @@ def update_meta(jid: str, **kw) -> dict:
 
 def job_opts(jid: str) -> Options:
     o = Options.from_dict(read_meta(jid).get("options"))
+    try:                                   # V4.28: the admin's switch for learning zones
+        lc = learning_cfg()
+        o.learn_zones = bool(o.learn_zones and lc["enabled"] and lc.get("zones", True))
+    except Exception:
+        pass
     # this request works on this job: the V4 engine, or its client's house
     # style engine (core/compat.py)
     use_engine(o)
@@ -479,18 +695,32 @@ def _clear(jid: str, kind: str) -> None:
     shutil.rmtree(_hist(jid, kind), ignore_errors=True)
 
 
-_model_cache: dict[str, tuple[float, DocModel]] = {}
+# V4.28: the tags of the files people have open stay in memory — the 24 used last (PDFUA_MODEL_CACHE).
+# A server that runs for weeks with many people would otherwise keep every file anybody ever opened.
+MODEL_CACHE_MAX = max(4, int(os.environ.get("PDFUA_MODEL_CACHE", "24") or 24))
+_model_cache: "collections.OrderedDict[str, tuple[float, DocModel]]" = collections.OrderedDict()
+_mc_lock = threading.Lock()
+
+
+def _cache_model(jid: str, mt: float, model: DocModel) -> None:
+    with _mc_lock:
+        _model_cache[jid] = (mt, model)
+        _model_cache.move_to_end(jid)
+        while len(_model_cache) > MODEL_CACHE_MAX:
+            _model_cache.popitem(last=False)
 
 
 def get_model(jid: str) -> DocModel:
     """model.json, cached in memory while the file is unchanged."""
     path = os.path.join(job_dir(jid), "model.json")
     mt = os.path.getmtime(path)
-    hit = _model_cache.get(jid)
-    if hit and hit[0] == mt:
-        return hit[1]
+    with _mc_lock:
+        hit = _model_cache.get(jid)
+        if hit and hit[0] == mt:
+            _model_cache.move_to_end(jid)
+            return hit[1]
     model = load_model(job_dir(jid))
-    _model_cache[jid] = (mt, model)
+    _cache_model(jid, mt, model)
     return model
 
 
@@ -544,8 +774,13 @@ def mutate(jid: str):
         _house_after_edit(jid, model, roles_before)
         model.check_integrity()
         save_model(job_dir(jid), model)
-        _model_cache[jid] = (os.path.getmtime(path), model)
-        update_meta(jid, edited=datetime.now().isoformat(timespec="seconds"), dirty=True)
+        _cache_model(jid, os.path.getmtime(path), model)
+        update_meta(jid, edited=datetime.now().isoformat(timespec="seconds"), dirty=True,
+                    edited_by=current_user_name() or "")
+    try:                                  # V4.28: every change of the tags teaches the tool, a few seconds later
+        learn_live(jid)
+    except Exception:
+        pass
 
 
 def _house_after_edit(jid: str, model, roles_before: dict) -> None:
@@ -570,8 +805,84 @@ def _house_after_edit(jid: str, model, roles_before: dict) -> None:
         model.warnings.append(f"house style after the edit: {exc}")
 
 
+# ---------------------------------------------------------------- who else has the file open (V4.28)
+# Several people can have the same file open. Every few seconds the editor asks "who is here, and has
+# anybody changed the tags since I loaded them?" — so nobody works on a picture that is out of date
+# without knowing it. Kept in memory only: it is who is here now, not a record.
+PRESENCE: dict[str, dict[str, dict]] = {}
+PRESENCE_TTL = 20.0
+_presence_lock = threading.Lock()
+
+
+def model_rev(jid: str) -> str:
+    """The version of the tags: changes whenever anything writes them (an edit, an undo, a re-tag, a split)."""
+    try:
+        return str(os.stat(os.path.join(job_dir(jid), "model.json")).st_mtime_ns)
+    except OSError:
+        return ""
+
+
+def presence_here(jid: str, me: str, page: int = 0, touch: bool = True) -> list[dict]:
+    now = time.time()
+    with _presence_lock:
+        people = PRESENCE.setdefault(jid, {})
+        if touch:
+            people[me] = {"t": now, "page": page}
+        for p in [p for p, v in people.items() if now - v["t"] > PRESENCE_TTL]:
+            del people[p]
+        out = [{"user": p, "page": v["page"] + 1, "ago": int(now - v["t"])} for p, v in sorted(people.items()) if p != me]
+        if not people:
+            PRESENCE.pop(jid, None)
+        return out
+
+
+def editing_now() -> dict[str, list[str]]:
+    """{file: [people who have it open right now]}"""
+    now = time.time()
+    with _presence_lock:
+        return {j: sorted(p for p, v in people.items() if now - v["t"] <= PRESENCE_TTL)
+                for j, people in PRESENCE.items() if any(now - v["t"] <= PRESENCE_TTL for v in people.values())}
+
+
+# ---------------------------------------------------------------- how busy the server is (V4.28)
+def load_stats() -> dict:
+    """Admin → System: is the one-at-a-time lock, the work queue or the learner a bottleneck?"""
+    out: dict = {"mupdf": MUPDF_LOCK.snapshot(), "queue": TASKS.snapshot(), "people_waiting": TASKS.waiting_by(),
+                 "workers": TARGET_FILES, "running": len(RUNNING), "editing": editing_now()}
+    try:
+        out["threads"] = threading.active_count()
+        out["web_threads"] = int(os.environ.get("PDFUA_THREADS", 0) or 0) or None
+    except Exception:
+        pass
+    return out
+
+
 # ============================================================== worker
-TASKS: "queue.Queue[tuple[str, str]]" = queue.Queue()
+# V4.28: the files waiting to be analysed or built are served in turns — one file of each
+# person, then the next person's — so one person's forty files never keep everybody else
+# waiting; a file marked urgent (or high) goes first, a build somebody is watching goes before
+# a new upload of the same priority, and the brain's background training goes last.
+_PRIORITY_RANK = {"urgent": 0.0, "high": 1.0, "normal": 2.0, "low": 3.0}
+_KIND_RANK = {"build": -0.5, "contrast_fix": -0.5, "ai_alt": -0.5, "brain": 2.0}
+
+
+def _task_key(item: tuple[str, str]) -> tuple[str, float]:
+    jid, kind = item
+    try:
+        m = read_meta(jid)
+    except Exception:
+        m = {}
+    who = (m.get("owner") or m.get("assigned_to") or "")
+    try:
+        if has_request_context():                  # the person who pressed the button is the one waiting
+            who = current_user_name() or who
+    except Exception:
+        pass
+    rank = _PRIORITY_RANK.get(str(m.get("priority") or "normal"), 2.0) + _KIND_RANK.get(kind, 0.0)
+    return str(who).strip().lower(), rank
+
+
+TASKS = FairQueue(key=_task_key)
 
 
 def _progress(jid: str):
@@ -607,6 +918,7 @@ def run_prepare(jid: str) -> None:
     opts.ai_samples = bool(opts.ai_samples and lc["use_ai"])
     opts.sample_rules = bool(opts.sample_rules and lc["rules"])
     opts.ai_brain = bool(opts.ai_brain and lc["brain"])
+    opts.learn_zones = bool(opts.learn_zones and lc["enabled"] and lc.get("zones", True))
     update_meta(jid, stage="processing", progress=0, message="starting", error="")
     cfg = ai_cfg()
     task = {"kind": "prepare", "options": opts.to_dict(), "filename": meta.get("filename", ""),
@@ -1266,6 +1578,7 @@ def api_status(jid):
 
 @app.route("/api/job/<jid>/model")
 def api_model(jid):
+    rev = model_rev(jid)
     model = get_model(jid)
     if not model.info.get("cell_zones_checked") and any(
             n.role in ("TD", "TH") and n.bbox is None for n in model.nodes.values()):
@@ -1274,10 +1587,7 @@ def api_model(jid):
             edit.fill_cell_zones(m2, os.path.join(job_dir(jid), "working.pdf"))
             m2.info["cell_zones_checked"] = True
         model = get_model(jid)
-    doc = _page_doc(jid)
-    mats = [tuple(edit.display_matrix(p)) for p in doc]
-    sizes = [[round(p.rect.width, 2), round(p.rect.height, 2)] for p in doc]
-    doc.close()
+    mats, sizes = page_geometry(jid)             # V4.28: read from the PDF once, not at every load
 
     def disp(p, r):
         a, b, c, d_, e, f = mats[p]
@@ -1310,29 +1620,106 @@ def api_model(jid):
     return jsonify({"nodes": nodes, "roots": model.root_children, "pages": len(sizes),
                     "page_sizes": sizes, "title": model.title, "lang": model.lang,
                     "mode": model.mode, "warnings": model.warnings, "info": model.info,
-                    "can_undo": bool(_stack(jid, "undo")), "can_redo": bool(_stack(jid, "redo"))})
+                    "can_undo": bool(_stack(jid, "undo")), "can_redo": bool(_stack(jid, "redo")), "rev": rev})
+
+
+@app.route("/api/job/<jid>/presence")
+def api_presence(jid):
+    """Who else has this file open, and has anybody changed the tags since the editor loaded them? (V4.28)"""
+    job_dir(jid)
+    jid = secure_filename(jid)
+    me = current_user_name() or "?"
+    try:
+        page = max(0, int(request.args.get("page", 0)))
+    except ValueError:
+        page = 0
+    here = presence_here(jid, me, page)
+    rev = model_rev(jid)
+    mine = request.args.get("rev", "")
+    try:
+        meta = read_meta(jid)
+    except Exception:
+        meta = {}
+    return jsonify({"rev": rev, "here": here, "changed": bool(mine) and bool(rev) and mine != rev,
+                    "by": meta.get("edited_by") or "", "at": meta.get("edited") or "", "me": me})
 
 
 @app.route("/job/<jid>/page/<int:pno>.png")
 def page_png(jid, pno):
-    zoom = min(max(float(request.args.get("z", 1.5)), 0.2), 8.0)        # up to 800 % (V4.21.1)
-    src = "accessible.pdf" if request.args.get("v") == "out" else "working.pdf"
-    path = os.path.join(job_dir(jid), src)
-    if not os.path.exists(path):
-        path = os.path.join(job_dir(jid), "original.pdf")
-    doc = pymupdf.open(path)
-    if pno < 0 or pno >= doc.page_count:
-        abort(404)
-    # a very big page (a poster) at 800 % is drawn at most ~60 million pixels;
-    # the browser stretches it to the size asked for
-    r = doc[pno].rect
-    zoom = min(zoom, (60_000_000 / max(1.0, r.width * r.height)) ** 0.5)
-    pix = doc[pno].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
-    data = pix.tobytes("png")
-    doc.close()
+    """A page as a picture. V4.28: drawn once for everybody — the picture is kept next to the file
+    (named after the PDF's own date, so a changed PDF is drawn again) and a later request, from any
+    person, is a file read that waits for nobody; a browser that has it asks "has it changed?"
+    and gets a 304."""
+    zoom = _page_zoom()                                                 # up to 800 % (V4.21.1)
+    src = _page_source(jid)
+    f = _page_cache_file(jid, pno, zoom, src)
+    etag = f'W/"{os.path.basename(f)}"' if f else ""
+    if f and request.headers.get("If-None-Match") == etag and os.path.exists(f):
+        resp = app.response_class(status=304)
+        resp.headers["ETag"] = etag
+        resp.headers["Cache-Control"] = "private, max-age=600"
+        return resp
+    data = _read_cached(f)
+    if data is None:
+        with MUPDF_LOCK:
+            data = _read_cached(f)                       # twenty people open the same page: the first draws it
+            if data is None:
+                doc = pymupdf.open(os.path.join(job_dir(jid), src))
+                try:
+                    if pno < 0 or pno >= doc.page_count:
+                        abort(404)
+                    # a very big page (a poster) at 800 % is drawn at most ~60 million pixels;
+                    # the browser stretches it to the size asked for
+                    r = doc[pno].rect
+                    zoom = min(zoom, (60_000_000 / max(1.0, r.width * r.height)) ** 0.5)
+                    data = doc[pno].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False).tobytes("png")
+                finally:
+                    doc.close()
+                if f:
+                    _page_cache_put(f, data)
     resp = send_file(io.BytesIO(data), mimetype="image/png")
     resp.headers["Cache-Control"] = "private, max-age=600"
+    if etag:
+        resp.headers["ETag"] = etag
     return resp
+
+
+PAGE_CACHE_FILES = 240          # pictures kept for one file (a few tens of MB)
+
+
+def _read_cached(path: str | None) -> bytes | None:
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _page_cache_put(path: str, data: bytes) -> None:
+    """Keep a drawn page: written whole (a reader never sees half a picture); older pictures of the
+    same page (the PDF changed) and the oldest ones of a file with very many go."""
+    try:
+        d = os.path.dirname(path)
+        os.makedirs(d, exist_ok=True)
+        tmp = path + f".{threading.get_ident()}.tmp"
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+        stem = os.path.basename(path).rsplit("_", 1)[0] + "_"
+        files = sorted((os.path.getmtime(os.path.join(d, x)), x) for x in os.listdir(d) if x.endswith(".png"))
+        for _, x in files:
+            if x.startswith(stem) and os.path.join(d, x) != path:
+                os.remove(os.path.join(d, x))
+        if len(files) > PAGE_CACHE_FILES:
+            for _, x in files[:len(files) - PAGE_CACHE_FILES]:
+                try:
+                    os.remove(os.path.join(d, x))
+                except OSError:
+                    pass
+    except OSError:
+        pass
 
 
 @app.route("/job/<jid>/support/<int:pno>.zip")
@@ -1594,6 +1981,12 @@ def api_retag(jid):
             o = Options.from_dict(opts.to_dict())
             o.ai_alt_text_auto = False
             auto = analyze(os.path.join(job_dir(jid), "working.pdf"), o, pages=pages)
+            try:                                   # V4.28: these pages' pairs are the new proposal's
+                from core import zonelearn
+                if getattr(auto, "zone_log", None) is not None:
+                    zonelearn.save_pairs(job_dir(jid), auto.zone_log, only_pages=set(pages))
+            except Exception:
+                pass
         else:
             auto = load_auto_model(job_dir(jid), opts, fresh=bool(b.get("fresh")))
         with mutate(jid) as model:
@@ -1770,25 +2163,21 @@ def api_list_edit(jid, lid):
 def api_templates():
     """Table and list templates, kept for every file and every user (V4.19)."""
     from core import templates as tpl
-    cfg = load_config()
     if request.method == "GET":
-        return jsonify(tpl.listing(cfg))
+        return jsonify(tpl.listing(load_config()))
     b = request.get_json(force=True) or {}
     kind = str(b.get("kind") or "")
     if kind not in ("table", "list"):
         return _err("a template is for a table or a list")
-    store = tpl.store(cfg)
     if b.get("delete"):
-        store[kind].pop(str(b.get("number")), None)
-        save_config(cfg)
+        with config_edit() as cfg:
+            tpl.store(cfg)[kind].pop(str(b.get("number")), None)
         return jsonify({"ok": True, **tpl.listing(cfg)})
     jid, nid = str(b.get("job") or ""), str(b.get("id") or "")
     try:
         number = int(b.get("number") or 0)
     except ValueError:
         return _err("give the template a number")
-    if number < 1:
-        number = max([int(k) for k in store[kind]] or [0]) + 1
     try:
         job_dir(jid)
         if jid not in _visible_jobs():
@@ -1803,10 +2192,14 @@ def api_templates():
             spec = listedit.list_spec(model, work, nid)
     except Exception as exc:
         return _err(f"could not read that {kind}: {exc}")
-    spec.update({"number": number, "name": str(b.get("name") or "")[:80], "by": current_user_name(),
+    spec.update({"name": str(b.get("name") or "")[:80], "by": current_user_name(),
                  "made": datetime.now().isoformat(timespec="seconds"), "from": f"{read_meta(jid).get('filename', '')}"})
-    store[kind][str(number)] = spec
-    save_config(cfg)
+    with config_edit() as cfg:               # the next free number is picked here, so two people never share one
+        store = tpl.store(cfg)
+        if number < 1:
+            number = max([int(k) for k in store[kind]] or [0]) + 1
+        spec["number"] = number
+        store[kind][str(number)] = spec
     return jsonify({"ok": True, "number": number, "summary": tpl.summary(spec), **tpl.listing(cfg)})
 
 
@@ -1930,6 +2323,17 @@ def api_zone_delete(jid):
     return jsonify(r)
 
 
+def _last_editor(jid: str) -> tuple[str, float | None]:
+    """(who changed the tags last, seconds ago)"""
+    try:
+        m = read_meta(jid)
+        at = m.get("edited") or ""
+        ago = (datetime.now() - datetime.fromisoformat(at)).total_seconds() if at else None
+        return str(m.get("edited_by") or ""), ago
+    except Exception:
+        return "", None
+
+
 @app.route("/api/job/<jid>/undo", methods=["POST"])
 @app.route("/api/job/<jid>/redo", methods=["POST"])
 def api_undo(jid):
@@ -1940,13 +2344,23 @@ def api_undo(jid):
         stack = _stack(jid, kind)
         if not stack:
             return _err(f"nothing to {kind}")
+        # V4.28: the history belongs to the file, not to a person. When somebody else made the last change a
+        # moment ago, ask before taking it back — it may not be what this person meant to undo.
+        if not (request.get_json(silent=True) or {}).get("force"):
+            who, ago = _last_editor(jid)
+            if who and who.lower() != (current_user_name() or "").lower() and ago is not None and ago < 900:
+                return jsonify({"error": f"{who} made the last change {max(1, int(ago // 60))} min ago — "
+                                         f"{kind} it anyway?", "confirm": True, "by": who}), 409
         cur = os.path.join(job_dir(jid), "model.json")
         _push(jid, other, cur)
         last = os.path.join(_hist(jid, kind), stack[-1])
-        shutil.copyfile(last, cur)
+        tmp = cur + ".undo.tmp"                    # replaced whole, never half written (the learner reads it)
+        shutil.copyfile(last, tmp)
+        replace_file(tmp, cur)
         os.remove(last)
         _model_cache.pop(jid, None)
-    update_meta(jid, dirty=True)
+    update_meta(jid, dirty=True, edited_by=current_user_name() or "")
+    learn_live(jid)
     return jsonify({"ok": True})
 
 
@@ -3011,12 +3425,19 @@ def download(jid, what):
 # ------------------------------------------------------------ settings
 @app.route("/api/settings", methods=["GET", "POST"])
 def api_settings():
-    cfg = load_config()
     if request.method == "GET":
-        return jsonify({**cfg, "env": env_status()})
+        cfg = load_config()
+        return jsonify({**{k: v for k, v in cfg.items() if k not in ("templates", "privacy")}, "env": env_status()})
     if not is_admin():
         return _err("only an admin changes the settings", 403)
     b = request.get_json(force=True) or {}
+    with config_edit() as cfg:
+        _apply_settings(cfg, b)
+    apply_parallel(cfg)
+    return jsonify({"ok": True, "env": env_status()})
+
+
+def _apply_settings(cfg: dict, b: dict) -> None:
     if "ai" in b and isinstance(b["ai"], dict):
         if b["ai"].get("base_url"):
             cfg["ai"]["base_url"] = str(b["ai"]["base_url"])[:300]
@@ -3054,9 +3475,6 @@ def api_settings():
                     p[k] = max(0, min(hi, int(b["parallel"][k] or 0)))
                 except (TypeError, ValueError):
                     pass
-    save_config(cfg)
-    apply_parallel(cfg)
-    return jsonify({"ok": True, "env": env_status()})
 
 
 @app.route("/api/profiles", methods=["POST"])
@@ -3067,12 +3485,12 @@ def api_profiles():
     name = str(b.get("name", "")).strip()[:80]
     if not name or name in BUILTIN_PROFILES:
         return _err("choose a new profile name")
-    cfg = load_config()
-    if b.get("delete"):
-        cfg["profiles"].pop(name, None)
-    else:
-        cfg["profiles"][name] = Options.from_dict(b.get("options") or {}).to_dict()
-    save_config(cfg)
+    opts = None if b.get("delete") else Options.from_dict(b.get("options") or {}).to_dict()
+    with config_edit() as cfg:
+        if opts is None:
+            cfg["profiles"].pop(name, None)
+        else:
+            cfg["profiles"][name] = opts
     return jsonify({"ok": True, "profiles": all_profiles()})
 
 
@@ -3409,13 +3827,12 @@ def api_admin_workflow():
     """The workflow settings and the pipeline: every file by step."""
     if request.method == "POST":
         b = request.get_json(force=True) or {}
-        cfg = load_config()
-        cur = {**WF.DEFAULTS, **(cfg.get("workflow") or {})}
-        for k in WF.DEFAULTS:
-            if k in b:
-                cur[k] = bool(b[k])
-        cfg["workflow"] = cur
-        save_config(cfg)
+        with config_edit() as cfg:
+            cur = {**WF.DEFAULTS, **(cfg.get("workflow") or {})}
+            for k in WF.DEFAULTS:
+                if k in b:
+                    cur[k] = bool(b[k])
+            cfg["workflow"] = cur
         log_action("workflow settings", "", "", ", ".join(f"{k}={'on' if v else 'off'}" for k, v in cur.items()))
     from collections import Counter
     jobs = list_jobs(100000)
@@ -3677,6 +4094,8 @@ def api_admin_update():
                                                      "by": current_user_name(), "text": b["note"].strip()[:1000],
                                                      "action": "note"})
             write_meta(i, meta)
+        if b.get("priority") in ("low", "normal", "high", "urgent"):
+            TASKS.rekey(lambda it, i=i: it[0] == i)           # a file made urgent moves up the queue
         log_action("updated", i, meta.get("filename", ""),
                    ", ".join(f"{k}={b[k]}" for k in ("priority", "due", "work") if k in b))
         if b.get("work") in WORK_STATES:
@@ -3906,7 +4325,8 @@ def api_admin_system():
                     "parallel": cfg.get("parallel"), "ai": {k: cfg["ai"].get(k) for k in ("enabled", "base_url", "text_model", "vision_model")},
                     "learning": learning_cfg(), "samples": LEARN.db_stats(), "users": len(ACCOUNTS.all()),
                     "profiles": len(all_profiles()), "stages": {s: sum(1 for m in jobs if m.get("stage") == s)
-                                                                for s in ("review", "done", "error", "queued", "processing", "building", "question")}})
+                                                                for s in ("review", "done", "error", "queued", "processing", "building", "question")},
+                    "load": load_stats(), "live": dict(LIVE_STATS)})
 
 
 @app.route("/api/admin/cleanup", methods=["POST"])
@@ -4092,11 +4512,10 @@ def api_admin_samples_upload():
     made_profile = ""
     if client and request.form.get("make_profile") == "on" and client not in all_profiles():
         base = request.form.get("base_profile") or "Default"
-        cfg = load_config()
         o = Options.from_dict(all_profiles().get(base, {}))
         o.client = client
-        cfg.setdefault("profiles", {})[client] = o.to_dict()
-        save_config(cfg)
+        with config_edit() as cfg:
+            cfg.setdefault("profiles", {})[client] = o.to_dict()
         made_profile = client
     ids = []
     import tempfile
@@ -4196,6 +4615,7 @@ def _learn_from_approved(jid: str) -> str:
     meta = read_meta(jid)
     d = job_dir(jid)
     mj, wp, aj = (os.path.join(d, f) for f in ("model.json", "working.pdf", "auto_model.json"))
+    zp = os.path.join(d, "zone_pairs.npz")             # V4.28: the pairs of lines the tool decided on
     if not (os.path.exists(mj) and os.path.exists(wp)):
         return ""
     o = Options.from_dict(meta.get("options"))
@@ -4213,7 +4633,8 @@ def _learn_from_approved(jid: str) -> str:
                                                         if k in ("house_style", "existing_tags", "section_wrap", "table_strategy")}}
     try:
         sid = LEARN.upsert_job_sample(jid, client, meta.get("filename", jid), wp, mj,
-                                      aj if os.path.exists(aj) else "", current_user_name(), details)
+                                      aj if os.path.exists(aj) else "", current_user_name(), details,
+                                      pairs_src=zp if os.path.exists(zp) else "")
     except Exception:
         return ""
     update_meta(jid, sample_id=sid)
@@ -4251,13 +4672,12 @@ def _work_changed(jid: str, work: str) -> str:
 def api_admin_learning():
     if request.method == "POST":
         b = request.get_json(force=True) or {}
-        cfg = load_config()
-        cur = {**LEARNING_DEFAULTS, **(cfg.get("learning") or {})}
-        for k in LEARNING_DEFAULTS:
-            if k in b:
-                cur[k] = bool(b[k])
-        cfg["learning"] = cur
-        save_config(cfg)
+        with config_edit() as cfg:
+            cur = {**LEARNING_DEFAULTS, **(cfg.get("learning") or {})}
+            for k in LEARNING_DEFAULTS:
+                if k in b:
+                    cur[k] = bool(b[k])
+            cfg["learning"] = cur
         log_action("learning settings", "", "", ", ".join(f"{k}={'on' if v else 'off'}" for k, v in cur.items()))
     return jsonify({"ok": True, "learning": learning_cfg(), "db": LEARN.db_stats(),
                     "ai": bool(ai_cfg().enabled)})
@@ -4389,41 +4809,108 @@ from core import inventory as INVENTORY  # noqa: E402
 from core import kb as KB  # noqa: E402
 
 _LIVE: dict[str, threading.Timer] = {}
+_LIVE_FIRST: dict[str, float] = {}
+_LIVE_STATE: dict[str, dict] = {}
+_LIVE_LOCK = threading.Lock()
+# at most this many learner processes at the same time (each one is a Python with MuPDF and numpy)
+_LIVE_SLOTS = threading.BoundedSemaphore(max(1, int(os.environ.get("PDFUA_LEARNERS", "2") or 2)))
+LIVE_STATS = {"runs": 0, "failed": 0, "last": "", "last_seconds": 0.0, "waiting": 0, "running": 0}
+LIVE_DELAY = float(os.environ.get("PDFUA_LIVE_DELAY", "4") or 4)       # seconds after the last edit
+LIVE_MAX_WAIT = 45.0      # a person who keeps editing is learned from at least this often
 
 
-def learn_live(jid: str, delay: float = 4.0) -> None:
+def learn_live(jid: str, delay: float | None = None) -> None:
     """V4.26: what a person changed is remembered a few seconds after the last
-    edit — not only at the build — so the next file of anybody benefits."""
-    lc = learning_cfg()
-    if not (lc["enabled"] and lc["feedback"]):
-        return
-    old = _LIVE.pop(jid, None)
-    if old is not None:
-        old.cancel()
+    edit — not only at the build — so the next file of anybody benefits.
 
-    def run():
+    V4.28: not in this process any more. Learning reads the PDF; with many people editing that
+    would make every pause in typing take the editor's MuPDF lock from everybody else. The job
+    is handed to a learner process (core/livelearn.py): at most PDFUA_LEARNERS (2) at once, one
+    for each file at a time (what is changed meanwhile is learned by a second run right after),
+    and a person who never pauses is learned from every 45 s all the same."""
+    lc = learning_cfg()
+    if not (lc["enabled"] and (lc["feedback"] or lc.get("zones", True))):
+        return
+    try:
+        by = current_user_name()
+        role = (current_user() or {}).get("role", "")
+    except Exception:
+        by, role = "", ""
+    delay = LIVE_DELAY if delay is None else delay
+    with _LIVE_LOCK:
+        old = _LIVE.pop(jid, None)
+        if old is not None:
+            old.cancel()
+        first = _LIVE_FIRST.setdefault(jid, time.time())
+        wait = 0.2 if time.time() - first > LIVE_MAX_WAIT else delay
+        t = threading.Timer(wait, _live_fire, args=(jid, by, role in ("admin", "qa", "final_qa")))
+        t.daemon = True
+        _LIVE[jid] = t
+        t.start()
+
+
+def _live_fire(jid: str, by: str, reviewer: bool) -> None:
+    with _LIVE_LOCK:
         _LIVE.pop(jid, None)
+        _LIVE_FIRST.pop(jid, None)
+        st = _LIVE_STATE.setdefault(jid, {"running": False, "again": False})
+        if st["running"]:
+            st["again"] = True                  # being learned from right now: once more when it is done
+            return
+        st["running"] = True
+    try:
+        while True:
+            _live_run(jid, by, reviewer)
+            with _LIVE_LOCK:
+                if st["again"]:
+                    st["again"] = False
+                    continue
+                st["running"] = False
+                break
+    except Exception as exc:
+        app.logger.warning("live learning: %s", exc)
+        with _LIVE_LOCK:
+            st["running"] = False
+
+
+def _live_run(jid: str, by: str, reviewer: bool) -> dict:
+    import subprocess
+    try:
+        d = job_dir(jid, must_exist=False)
+        if not os.path.exists(os.path.join(d, "auto_model.json")):
+            return {}
+        lc = learning_cfg()
+        client = _job_client(jid)
+    except Exception:
+        return {}
+    cmd = [sys.executable, "-m", "core.livelearn", d, client, by, "1" if reviewer else "0",
+           "1" if lc.get("zones", True) else "0", "1" if lc.get("feedback", True) else "0"]
+    with _LIVE_LOCK:
+        LIVE_STATS["waiting"] += 1
+    with _LIVE_SLOTS:
+        with _LIVE_LOCK:
+            LIVE_STATS["waiting"] -= 1
+            LIVE_STATS["running"] += 1
+        t0 = time.time()
+        res: dict = {}
         try:
-            d = job_dir(jid)
-            ap = os.path.join(d, "auto_model.json")
-            if not os.path.exists(ap):
-                return
-            with open(ap, encoding="utf-8") as fh:
-                auto = DocModel.from_json(fh.read())
-            with MUPDF_LOCK:
-                model = get_model(jid)
-                client = _job_client(jid)
-                r = BRAIN.record_feedback(d, client, model, auto)
-                from core import memory as MEMORY
-                MEMORY.learn(d, client, model, auto, verified=False)
-            if r.get("feedback"):
-                kick_brain_training()
+            p = subprocess.run(cmd, cwd=BASE, env=dict(os.environ), timeout=600, capture_output=True, text=True)
+            try:
+                res = json.loads((p.stdout or "{}").strip().splitlines()[-1])
+            except (ValueError, IndexError):
+                res = {"error": (p.stderr or p.stdout or "")[-300:]}
         except Exception as exc:
-            app.logger.warning("live learning: %s", exc)
-    t = threading.Timer(delay, run)
-    t.daemon = True
-    _LIVE[jid] = t
-    t.start()
+            res = {"error": str(exc)[:300]}
+        with _LIVE_LOCK:
+            LIVE_STATS["running"] -= 1
+            LIVE_STATS["runs"] += 1
+            LIVE_STATS["failed"] += 1 if res.get("error") else 0
+            LIVE_STATS["last"] = datetime.now().isoformat(timespec="seconds")
+            LIVE_STATS["last_seconds"] = round(time.time() - t0, 2)
+    if (res.get("feedback") or {}).get("feedback"):
+        kick_brain_training()
+    return res
+
 
 _BRAIN_JOB = {"thread": None, "last": 0.0, "what": "", "result": None}
 
@@ -4523,7 +5010,20 @@ def api_admin_brain():
     except Exception:
         st["memories"] = {}
     st["privacy"] = {**NETGUARD.status(), "recent": NETGUARD.recent(20)}
+    try:                                           # V4.28: the zones people taught, and the learner processes
+        st["zones"] = ZONES.status()
+        st["live"] = dict(LIVE_STATS)
+    except Exception as exc:
+        st["zones"] = {"models": [], "error": str(exc)}
+    st["load"] = load_stats()
     return jsonify(st)
+
+
+@app.route("/api/admin/zones/train", methods=["POST"])
+def api_admin_zones_train():
+    r = ZONES.train_all(force=True)
+    log_action("zone models trained", "", "", "by hand")
+    return jsonify({"ok": True, **r})
 
 
 @app.route("/api/admin/brain/train", methods=["POST"])
@@ -4600,20 +5100,20 @@ def api_admin_code_rule(rid):
 # ---------------------------------------------------------------- the privacy guard (V4.26)
 @app.route("/api/admin/privacy", methods=["GET", "POST"])
 def api_admin_privacy():
-    cfg = load_config()
     if request.method == "POST":
         b = request.get_json(force=True) or {}
-        pv = dict(cfg.get("privacy") or {})
-        if "guard" in b:
-            pv["guard"] = bool(b["guard"])
-        if "allow" in b:
-            pv["allow"] = [str(h).strip().lower()[:200] for h in (b.get("allow") or []) if str(h).strip()][:30]
-        cfg["privacy"] = pv
-        save_config(cfg)
+        with config_edit() as cfg:
+            pv = dict(cfg.get("privacy") or {})
+            if "guard" in b:
+                pv["guard"] = bool(b["guard"])
+            if "allow" in b:
+                pv["allow"] = [str(h).strip().lower()[:200] for h in (b.get("allow") or []) if str(h).strip()][:30]
+            cfg["privacy"] = pv
         NETGUARD.install(CONFIG_PATH, process="web app")
         log_action("privacy settings", "", "", f"guard={'on' if pv.get('guard', True) else 'off'} "
                                                f"allow={','.join(pv.get('allow') or []) or '-'}")
     from urllib.parse import urlparse
+    cfg = load_config()
     host = urlparse((cfg.get("ai") or {}).get("base_url") or "").hostname or ""
     return jsonify({**NETGUARD.status(), "recent": NETGUARD.recent(50), "settings": cfg.get("privacy") or {},
                     "ai_host": host, "ai_host_local": NETGUARD._local_name(host) if host else True})
@@ -4754,10 +5254,81 @@ def api_job_brain_similar_apply(jid):
     return jsonify({"ok": True, "changed": done})
 
 
+# ---------------------------------------------------------------- zones learned from people (V4.28)
+from core import zonelearn as ZONES  # noqa: E402
+
+
+def _auto_of(jid: str):
+    ap = os.path.join(job_dir(jid), "auto_model.json")
+    if not os.path.exists(ap):
+        return None
+    with open(ap, encoding="utf-8") as fh:
+        return DocModel.from_json(fh.read())
+
+
+@app.route("/api/job/<jid>/zones/similar")
+def api_zones_similar(jid):
+    """The other places of this file that look like a zone a person has just cut or joined."""
+    try:
+        r = ZONES.similar(job_dir(jid), get_model(jid), _auto_of(jid))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "cut": [], "join": []})
+    pairs = ZONES.load_pairs(job_dir(jid))
+    out = {"ok": True, "corrections": r["corrections"]}
+    for kind in ("cut", "join"):
+        out[kind] = {"n": len(r[kind]), "pairs": r[kind],
+                     "pages": sorted({int(pairs["page"][i]) for i in r[kind]}) if pairs is not None else []}
+        out[kind]["nodes"] = []
+        if pairs is not None and r[kind]:
+            m = get_model(jid)
+            by_page = ZONES._text_nodes(m)
+            for i in r[kind][:300]:
+                box = pairs["box"][i]
+                o = ZONES._owner(by_page.get(int(pairs["page"][i])) or [], (box[4] + box[6]) / 2, (box[5] + box[7]) / 2)
+                if o is not None:
+                    # the start of the line below the cut: what a person looks for on the page
+                    out[kind]["nodes"].append({"id": o[0].id, "page": int(pairs["page"][i]),
+                                               "text": str(pairs["txt"][i]) or " ".join((o[0].text or "").split())[:40]})
+    return jsonify(out)
+
+
+@app.route("/api/job/<jid>/zones/similar/apply", methods=["POST"])
+def api_zones_similar_apply(jid):
+    """Cut (or join) the zones at the places `zones/similar` found — one Undo puts them back."""
+    b = request.get_json(force=True) or {}
+    action = "join" if b.get("action") == "join" else "cut"
+    try:
+        with mutate(jid) as model:
+            r = ZONES.apply(model, job_dir(jid), _auto_of(jid), os.path.join(job_dir(jid), "working.pdf"),
+                            action, [int(i) for i in (b.get("pairs") or [])][:600])
+    except edit.EditError as exc:
+        return _err(str(exc))
+    return jsonify({"ok": True, **r})
+
+
 if __name__ != "__mp_main__":
     start_workers()
     threading.Thread(target=_brain_upgrade, name="brain-upgrade", daemon=True).start()
 
+def serve() -> None:
+    """V4.28: with waitress installed (pip install waitress) the tool serves many people at once with a fixed
+    number of threads — PDFUA_THREADS, 24 by default — instead of one new thread for every request."""
+    host, port = os.environ.get("HOST", "0.0.0.0"), int(os.environ.get("PORT", 8000))
+    threads = max(4, int(os.environ.get("PDFUA_THREADS", 0) or 24))
+    if os.environ.get("PDFUA_SERVER", "").lower() != "flask":
+        try:
+            from waitress import serve as waitress_serve
+        except ImportError:
+            waitress_serve = None
+        if waitress_serve is not None:
+            print(f"Dezquare PDF Accessibility Studio {VERSION} · http://{host}:{port} · waitress, {threads} threads",
+                  flush=True)
+            waitress_serve(app, host=host, port=port, threads=threads, connection_limit=max(200, threads * 10),
+                           channel_timeout=300, ident="pdfua")
+            return
+        print("pip install waitress   — a production server for many people at the same time", flush=True)
+    app.run(host=host, port=port, debug=False, threaded=True)
+
+
 if __name__ == "__main__":
-    app.run(host=os.environ.get("HOST", "0.0.0.0"), port=int(os.environ.get("PORT", 8000)),
-            debug=False, threaded=True)
+    serve()

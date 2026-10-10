@@ -1567,3 +1567,11 @@ button.linkish{border:0;background:none;color:var(--accent);padding:0 2px;font-s
 .codeview{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font:12px/1.5 var(--mono);
   white-space:pre-wrap;max-height:360px;overflow:auto;margin-top:8px}
 .pvlog{max-height:140px;overflow:auto;background:var(--panel-2);border-radius:6px;padding:6px 8px;margin-top:4px}
+
+/* V4.28: other people in the same file */
+.herechip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:3px 10px;border-radius:999px;background:var(--info-soft);
+  color:var(--info);max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto}
+.editorpage .topbar>.stageseg{flex:0 0 auto}                 /* a chip more in the header never squeezes the Links tab */
+.stalebar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;display:flex;gap:10px;align-items:center;
+  padding:8px 12px;border-radius:10px;background:var(--warn-soft);color:var(--warn);border:1px solid var(--warn);
+  box-shadow:0 6px 20px rgba(0,0,0,.18);font-size:13px;animation:rise .25s var(--ease)}

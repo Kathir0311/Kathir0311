@@ -403,9 +403,10 @@ def read_sample(model, pdf_path: str, auto=None) -> dict:
 
 # ------------------------------------------------------------ the database
 def add_sample(client: str, filename: str, src: str, by: str = "", kind: str = "tagged",
-               job: str = "", model_src: str = "", auto_src: str = "", details: dict | None = None) -> str:
+               job: str = "", model_src: str = "", auto_src: str = "", details: dict | None = None,
+               pairs_src: str = "") -> str:
     sid = datetime.now().strftime("%Y%m%d%H%M%S") + uuid.uuid4().hex[:6]
-    _copy_files(sid, src, model_src, auto_src)
+    _copy_files(sid, src, model_src, auto_src, pairs_src)
     with connect() as c:
         c.execute("INSERT INTO samples (id, client, filename, kind, job, uploaded_by, created, status, details) "
                   "VALUES (?,?,?,?,?,?,?,?,?)",
@@ -414,12 +415,12 @@ def add_sample(client: str, filename: str, src: str, by: str = "", kind: str = "
     return sid
 
 
-def _copy_files(sid: str, src: str, model_src: str = "", auto_src: str = "") -> None:
+def _copy_files(sid: str, src: str, model_src: str = "", auto_src: str = "", pairs_src: str = "") -> None:
     import shutil
     files = os.path.join(samples_dir(), "files")
     os.makedirs(files, exist_ok=True)
     shutil.copyfile(src, os.path.join(files, sid + ".pdf"))
-    for s_, ext in ((model_src, ".model.json"), (auto_src, ".auto.json")):
+    for s_, ext in ((model_src, ".model.json"), (auto_src, ".auto.json"), (pairs_src, ".zone.npz")):
         dst = os.path.join(files, sid + ext)
         if s_ and os.path.exists(s_):
             shutil.copyfile(s_, dst)
@@ -437,15 +438,15 @@ def job_sample(job: str) -> dict | None:
 
 
 def upsert_job_sample(job: str, client: str, filename: str, pdf: str, model_src: str, auto_src: str = "",
-                      by: str = "", details: dict | None = None) -> str:
+                      by: str = "", details: dict | None = None, pairs_src: str = "") -> str:
     """An approved file teaches the tool: its sample is made — or, approved
     again after more work, brought up to date (V4.21)."""
     old = job_sample(job)
     if old is None:
         return add_sample(client, filename, pdf, by, kind="approved", job=job, model_src=model_src,
-                          auto_src=auto_src, details=details)
+                          auto_src=auto_src, details=details, pairs_src=pairs_src)
     sid = old["id"]
-    _copy_files(sid, pdf, model_src, auto_src)
+    _copy_files(sid, pdf, model_src, auto_src, pairs_src)
     with connect() as c:
         c.execute("UPDATE samples SET client=?, filename=?, uploaded_by=?, status='queued', enabled=1, error='', "
                   "details=? WHERE id=?", ((client or "").strip(), filename, by, json.dumps(details or {}), sid))
@@ -527,13 +528,39 @@ def learn_sample(sid: str) -> dict:
         except Exception as exc:
             brain_out = {"error": str(exc)[:200]}
         c.commit()
-        return {"ok": True, "blocks": len(r["blocks"]), "brain": brain_out}
+        zone_out = {}
+        try:                               # V4.28: where this file's zones are cut (core/zonelearn.py)
+            zone_out = _learn_zones(sid, client, model, auto, pdf, row)
+        except Exception as exc:
+            zone_out = {"error": str(exc)[:200]}
+        return {"ok": True, "blocks": len(r["blocks"]), "brain": brain_out, "zones": zone_out}
     except Exception as exc:
         c.execute("UPDATE samples SET status='error', error=? WHERE id=?", (str(exc)[:500], sid))
         c.commit()
         return {"ok": False, "error": str(exc)}
     finally:
         c.close()
+
+
+def _learn_zones(sid: str, client: str, model, auto, pdf: str, row) -> dict:
+    """The zones of a finished file become examples: every pair of lines the analysis decides on,
+    and whether the finished file cuts there. An approved job brings its own pairs (what the tool
+    decided while analysing it); a tagged PDF an admin uploaded is analysed once with the plain
+    rule."""
+    from . import brain, zonelearn
+    _, lc = brain.ai_from_config()
+    if not lc.get("zones", True):
+        return {"skipped": "zone learning is switched off"}
+    zpath = os.path.join(samples_dir(), "files", sid + ".zone.npz")
+    if not os.path.exists(zpath):
+        zonelearn.pairs_for_pdf(pdf, zpath)
+    out = zonelearn.record_sample(sid, client, model, zpath, auto)
+    job = (row["job"] if row is not None and "job" in row.keys() else "") or ""
+    if job:
+        zonelearn.forget("fb:" + job)          # the approved file replaces what was learned while it was edited
+    if out.get("rows"):
+        out["models"] = [{k: m[k] for k in ("scope", "status", "note")} for m in zonelearn.train_all().get("models", [])]
+    return out
 
 
 def samples() -> list[dict]:
@@ -566,6 +593,10 @@ def set_sample(sid: str, **kw) -> bool:
         if "client" in allowed:
             for t in SAMPLE_TABLES + BRAIN_SAMPLE_TABLES:
                 c.execute(f"UPDATE {t} SET client=? WHERE sample_id=?", (allowed["client"], sid))
+            try:
+                c.execute("UPDATE zone_rows SET client=? WHERE ref=?", (allowed["client"], sid))
+            except sqlite3.OperationalError:
+                pass
         return cur.rowcount > 0
 
 
@@ -573,8 +604,12 @@ def delete_sample(sid: str) -> bool:
     with connect() as c:
         for t in SAMPLE_TABLES + ("models",) + BRAIN_SAMPLE_TABLES:
             c.execute(f"DELETE FROM {t} WHERE sample_id=?", (sid,))
+        try:
+            c.execute("DELETE FROM zone_rows WHERE ref=?", (sid,))
+        except sqlite3.OperationalError:
+            pass
         cur = c.execute("DELETE FROM samples WHERE id=?", (sid,))
-    for ext in (".pdf", ".model.json", ".auto.json"):
+    for ext in (".pdf", ".model.json", ".auto.json", ".zone.npz"):
         p = os.path.join(samples_dir(), "files", sid + ext)
         if os.path.exists(p):
             os.remove(p)

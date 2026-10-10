@@ -86,14 +86,19 @@
   const CONTAINERS = new Set(['Document', 'Part', 'Art', 'Sect', 'Div', 'TOC', 'Index', 'NonStruct', 'Private',
     'L', 'LI', 'Table', 'TR', 'THead', 'TBody', 'TFoot', 'Ruby', 'Warichu']);
 
+  // V4.28: a zone cut or joined by hand — the tool looks for the same place elsewhere in the file
+  const ZONE_EDITS = /\/(create|geometry|zone\/delete|merge_parts|zones\/split|tags\/remove|move|bulk)$/;
   async function post(path, body) {
     const d = await UA.post(api(path), body);
-    if (d.error) UA.toast(d.error, 4200);
+    if (d.error && !d.confirm) UA.toast(d.error, 4200);
+    else if (ZONE_EDITS.test(path)) offerZonesSoon();
     return d;
   }
 
   async function load(keep) {
     model = await UA.get(api('/model'));
+    rev = model.rev || '';
+    hideStale();
     $('pageTotal').textContent = model.pages;
     $('undoBtn').disabled = !model.can_undo;
     $('redoBtn').disabled = !model.can_redo;
@@ -1055,6 +1060,86 @@
     document.body.append(simCard);
     setTimeout(() => { if (simCard && !simCard.matches(':hover')) close(); }, 30000);
   }
+  // ------------------------------------------- V4.28: one zone cut by hand, the same cut elsewhere in the file
+  let zoneCard = null, zoneTimer = null;
+  const zoneSeen = new Set();
+  function offerZonesSoon() {
+    clearTimeout(zoneTimer);
+    zoneTimer = setTimeout(offerZones, 1600);
+  }
+  async function offerZones() {
+    let r;
+    try { r = await UA.get(api('/zones/similar')); } catch (e) { return; }
+    if (!r || !r.ok) return;
+    const kind = r.cut && r.cut.n ? 'cut' : r.join && r.join.n ? 'join' : '';
+    if (!kind) { if (zoneCard) { zoneCard.remove(); zoneCard = null; } return; }
+    const it = r[kind];
+    const sig = kind + ':' + it.n + ':' + (it.pairs[0] ?? '');
+    if (zoneSeen.has(sig)) return;
+    if (zoneCard) { zoneCard.remove(); zoneCard = null; }
+    const close = () => { zoneSeen.add(sig); if (zoneCard) { zoneCard.remove(); zoneCard = null; } };
+    const what = kind === 'cut'
+      ? `${it.n} more place(s) in this file look like the one you cut — the same space between the lines — and are still one zone. Cut them too?`
+      : `${it.n} more pair(s) of zones in this file look like the two you joined and are still apart. Join them too?`;
+    zoneCard = el('div', { class: 'simcard', role: 'status' },
+      el('div', { class: 'small' }, el('b', { text: '🧠 Learned from your zone fix' }), el('div', { text: what })),
+      el('div', { class: 'tiny muted simlist', text: it.nodes.slice(0, 5).map((x) => `p${x.page + 1} \u201c${x.text}\u201d`).join(' · ') + (it.n > 5 ? ' …' : '') }),
+      el('div', { class: 'btnrow' },
+        el('button', { class: 'sm primary', text: kind === 'cut' ? `Cut all ${it.n}` : `Join all ${it.n}`, onclick: async () => {
+          zoneSeen.add(sig);
+          const res = await UA.post(api('/zones/similar/apply'), { action: kind, pairs: it.pairs });
+          if (zoneCard) { zoneCard.remove(); zoneCard = null; }
+          if (res.error) { UA.toast(res.error, 4200); return; }
+          await load(focus);
+          UA.toast(`${res.changed} zone(s) ${kind === 'cut' ? 'cut' : 'joined'} like yours${res.skipped ? ` (${res.skipped} left as they are)` : ''} — Ctrl+Z puts them back`, 6000);
+        } }),
+        el('button', { class: 'sm', text: 'Show them', onclick: () => { if (it.nodes[0]) selectOnly(it.nodes[0].id, true); } }),
+        el('button', { class: 'sm', text: '✕', title: 'No, only this one', onclick: close })));
+    document.body.append(zoneCard);
+    setTimeout(() => { if (zoneCard && !zoneCard.matches(':hover')) close(); }, 40000);
+  }
+  // ------------------------------------------- V4.28: other people in the same file
+  // Every few seconds: who else has this file open, and did anybody change the tags since I loaded them?
+  let rev = '', staleBar = null, hbBusy = false, lastTouch = Date.now();
+  ['keydown', 'pointerdown'].forEach((ev) => document.addEventListener(ev, () => { lastTouch = Date.now(); }, true));
+  document.addEventListener('pointermove', (e) => { if (e.buttons) lastTouch = Date.now(); }, true);   // a drag is not idle
+  function hideStale() { if (staleBar) { staleBar.remove(); staleBar = null; } }
+  function showHere(list) {
+    const chip = $('hereChip');
+    if (!chip) return;
+    chip.classList.toggle('hidden', !list.length);
+    if (!list.length) return;
+    chip.textContent = '👥 ' + list.slice(0, 3).map((x) => x.user).join(', ') + (list.length > 3 ? ` +${list.length - 3}` : '');
+    chip.title = 'Also in this file: ' + list.map((x) => `${x.user} (page ${x.page})`).join(', ') +
+      '. Everybody’s changes are kept; the page shows theirs a moment after they make them.';
+    chip.setAttribute('aria-label', 'Also in this file: ' + list.map((x) => `${x.user}, page ${x.page}`).join('; '));
+  }
+  function showStale(who, at) {
+    if (staleBar) return;
+    staleBar = el('div', { class: 'stalebar', role: 'status' },
+      el('span', { text: `${who || 'Somebody'} changed the tags in this file${at ? ' (' + at.replace('T', ' ').slice(0, 16) + ')' : ''}. ` }),
+      el('button', { class: 'sm primary', text: 'Show their changes', onclick: async () => { hideStale(); await load(focus); } }));
+    document.body.append(staleBar);
+  }
+  async function heartbeat() {
+    if (document.hidden || hbBusy || !model) return;
+    hbBusy = true;
+    try {
+      const r = await fetch(api('/presence') + '?rev=' + encodeURIComponent(rev) + '&page=' + page);
+      if (!r.ok) return;
+      const d = await r.json();
+      showHere(d.here || []);
+      if (!d.changed) { hideStale(); return; }
+      const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+      const calm = Date.now() - lastTouch > 4000 && !typing && !busyNow();
+      if (calm || d.by === d.me) {
+        if (calm) { await load(focus); if (d.by && d.by !== d.me) UA.toast(`${d.by}’s changes are shown`, 2600); }
+      } else showStale(d.by, d.at);
+    } catch (e) { /* the server is busy or the network blinked: ask again in a moment */ } finally { hbBusy = false; }
+  }
+  const busyNow = () => !!document.querySelector('#uaBusy.on');
+  setInterval(heartbeat, 6000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) heartbeat(); });
   function actionButtons(n) {
     const row = el('div', { class: 'btnrow' });
     [['↑', 'up', 'Move up (Alt+↑)'], ['↓', 'down', 'Move down (Alt+↓)'], ['⇤', 'outdent', 'Out of parent (Alt+←)'],
@@ -2901,8 +2986,15 @@
     await post('/doc', { title: $('docTitle').value, lang: $('docLang').value });
     await refreshIssues();
   }));
-  $('undoBtn').addEventListener('click', async () => { const r = await post('/undo'); if (!r.error) await load(focus); });
-  $('redoBtn').addEventListener('click', async () => { const r = await post('/redo'); if (!r.error) await load(focus); });
+  // V4.28: the history belongs to the file — when somebody else made the last change a moment ago, ask first
+  async function undoRedo(path) {
+    let r = await post(path);
+    if (r.confirm) r = confirm(r.error) ? await post(path, { force: true }) : { error: 'cancelled' };
+    if (!r.error) await load(focus);
+    return r;
+  }
+  $('undoBtn').addEventListener('click', () => undoRedo('/undo'));
+  $('redoBtn').addEventListener('click', () => undoRedo('/redo'));
 
   // ------------------------------------------------------------ keyboard
   const HOTKEYS = { 1: 'H1', 2: 'H2', 3: 'H3', 4: 'H4', 5: 'H5', 6: 'H6', p: 'P', f: 'Figure', a: 'Artifact', c: 'Caption', n: 'Note', t: 'TD', h: 'TH' };
@@ -2985,13 +3077,12 @@
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'z') {
       e.preventDefault();
-      const r = await post(e.shiftKey ? '/redo' : '/undo');
-      if (!r.error) await load(focus);
+      await undoRedo(e.shiftKey ? '/redo' : '/undo');
       return;
     }
     if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'y') {
       e.preventDefault();
-      const r = await post('/redo'); if (!r.error) await load(focus);
+      await undoRedo('/redo');
       return;
     }
     if (e.ctrlKey || e.metaKey) return;

@@ -92,6 +92,16 @@ def main(argv=None) -> int:
         c = s.get("curve") or {}
         if c:
             print(f"right first time: {c.get('first')} % → {c.get('last')} % over {c.get('files')} approved file(s)")
+        try:                                       # V4.28: where zones are cut
+            from core import zonelearn
+            z = zonelearn.status()
+            print(f"zones: {z['corrections']} correction(s) in {z['refs']} file(s), {z['rows']} pairs")
+            for m in z["models"]:
+                print(f"  zone model {m['scope'] or 'everybody':14} {m['status']:8} {m['n']} pairs, {m['explicit']} corrections"
+                      + (f", fixes {m['fixed']} / spoils {m['broken']} on pages it was not trained on" if m["acc_model"] is not None else "")
+                      + (f" — {m['note']}" if m["note"] else ""))
+        except Exception:
+            pass
         print(f"memory {s.get('memory', 0)} texts ({s.get('embedded', 0)} with AI vectors) · {s.get('styles', 0)} style "
               f"patterns · {s.get('feedback', 0)} fixes from built files · doc types {s.get('doc_types') or {}}")
         for t in s.get("trust") or []:

@@ -349,6 +349,58 @@ def merge(model: DocModel, ids: list[str]) -> str:
     return first.id
 
 
+def split_at(model: DocModel, working_pdf: str, nid: str, cuts: list[float], note: str = "") -> list[str]:
+    """Cut a paragraph's zone at the given heights (PDF space) into one tag for each piece — what a
+    person does by drawing a zone round each paragraph, in one step (V4.28). The first piece keeps the
+    tag; the others follow it, top to bottom. Only a tag of a single zone can be cut. The links and
+    spans inside it go with the piece they are printed in, and a cut never goes through one of them
+    (that cut is left out). -> the ids, the first one being `nid`."""
+    n = model.nodes.get(nid)
+    if n is None or n.bbox is None or n.parts or n.artifact:
+        raise EditError("this tag cannot be cut here")
+    kids = [model.nodes[c] for c in n.children if c in model.nodes]
+    if any(k.bbox is None or k.parts or int(k.page) != int(n.page) for k in kids):
+        raise EditError("this tag has tags inside it that cannot be told apart")
+    x0, y0, x1, y1 = n.bbox
+    ys = sorted({round(c, 2) for c in cuts if y0 + 1.0 < c < y1 - 1.0
+                 and not any(k.bbox[1] < c < k.bbox[3] for k in kids)}, reverse=True)
+    if not ys:
+        raise EditError("nothing to cut")
+    edges = [y1] + ys + [y0]
+    doc = pymupdf.open(working_pdf)
+    try:
+        page = doc[n.page]
+        pieces: list[tuple] = []
+        for top, bottom in zip(edges, edges[1:]):
+            box = (x0, bottom, x1, top)
+            un = pymupdf.Rect(box) * page.transformation_matrix
+            un.normalize()
+            from .repair import _clean
+            text = _clean(re.sub(r"\s+", " ", printed_text(page, un)).strip())
+            if not text:
+                raise EditError("a piece of the cut has no text")
+            pieces.append((box, text))
+    finally:
+        doc.close()
+    n.bbox, n.text = pieces[0]
+    n.source, n.priority = "user", 1
+    ids = [nid]
+    at = model.siblings(nid).index(nid) + 1
+    for k, (box, text) in enumerate(pieces[1:]):
+        nd = StructNode(id=model.new_id("u"), role=n.role, page=n.page, bbox=box, text=text, source="user",
+                        priority=1, lang=n.lang, style=dict(n.style or {}),
+                        note=note or "a zone cut in two, as the zones before it were cut (learned)")
+        model.add(nd, n.parent, at + k)
+        ids.append(nd.id)
+    for kid in kids:                                  # each link or span stays with the text it is printed in
+        mid = (kid.bbox[1] + kid.bbox[3]) / 2
+        where = next((i for i, (box, _t) in enumerate(pieces) if box[1] <= mid <= box[3]), 0)
+        if where:
+            model.detach(kid.id)
+            model.add(kid, ids[where])
+    return ids
+
+
 # ------------------------------------------------- joining parts across pages
 def _rows_of(model: DocModel, tid: str) -> tuple[list[str], list[str], str]:
     """(header row ids, body row ids, the node the body rows hang from)."""
@@ -1714,6 +1766,11 @@ def _paragraphs_from_rect(model: DocModel, working_pdf: str, page_no: int, box,
     short last line), and each group becomes its own tag."""
     a = Analyzer(working_pdf, opts)
     a.model = model
+    try:                                   # V4.28: a zone drawn by hand is cut as the tool has learned to cut
+        from . import zonelearn
+        a.zone_model = zonelearn.pick(opts, working_pdf)
+    except Exception:
+        a.zone_model = None
     out: list[StructNode] = []
     try:
         page = a.doc[page_no]
@@ -1738,8 +1795,9 @@ def _paragraphs_from_rect(model: DocModel, working_pdf: str, page_no: int, box,
             groups = [[l] for l in ordered]
             groups = _rows_with_margin(groups, un)
         else:
-            for l in ordered:
-                if groups and not a._breaks(groups[-1][-1], l, right[l.flow], groups[-1]):
+            for k, l in enumerate(ordered):
+                if groups and not a._breaks(groups[-1][-1], l, right[l.flow], groups[-1],
+                                            ordered[k - 2] if k >= 2 else None):
                     groups[-1].append(l)
                 else:
                     groups.append([l])

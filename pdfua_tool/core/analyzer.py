@@ -1208,6 +1208,9 @@ class Analyzer:
         self.progress = progress or (lambda f, m: None)
         self.ai_cfg = ai_cfg
         self.only_pages: set | None = None      # analyse these pages only (V4.21.4)
+        self.zone_model = None                  # V4.28: what people taught about cutting zones (core/zonelearn.py)
+        self.zone_log: list | None = None       # V4.28: every pair of lines decided on, for learning
+        self._zone_ctx = None
         self.doc = pymupdf.open(path)
         # Work in unrotated page space: MuPDF's text/image APIs already do, but
         # table and drawing helpers answer in rotated space. Reset in memory only.
@@ -1532,7 +1535,9 @@ class Analyzer:
         n = self.doc.page_count
         shared = {"body": self.doc_body, "page_body": self.page_body, "edge_text": dict(self.edge_text), "slots": self.slots,
                   "stamps": dict(getattr(self, "_stamps", {}) or {}),
-                  "image_pages": dict(self.image_pages), "toc": self.toc}
+                  "image_pages": dict(self.image_pages), "toc": self.toc,
+                  "zone_model": self.zone_model.to_dict() if self.zone_model is not None else None,
+                  "zone_log": self.zone_log is not None}
         ai = self.ai_cfg.to_dict() if self.ai_cfg is not None and hasattr(self.ai_cfg, "to_dict") else None
         parts = chunks(list(range(n)), procs)
         jobs = [(self.path, self.opts.to_dict(), ai, shared, pg, f"c{i}_") for i, pg in enumerate(parts)]
@@ -1558,6 +1563,8 @@ class Analyzer:
                 else:
                     m.info.setdefault(k, v)
             self.heading_nodes.extend(m.nodes[h] for h in res["headings"] if h in m.nodes)
+            if self.zone_log is not None:
+                self.zone_log.extend(res.get("zones") or [])
         m.info["parallel_page_procs"] = procs
 
     def _stem_label(self, page, l: Line) -> dict | None:
@@ -2669,6 +2676,7 @@ class Analyzer:
     # ------------------------------------------------------------- page
     def _page(self, pno: int) -> None:
         page = self.doc[pno]
+        self._zone_ctx = (pno, page)
         if getattr(self, "page_body", None):
             # a large-print page is measured against its own running text
             self.body = max(self.page_body[pno], getattr(self, "page_main", self.page_body)[pno])
@@ -2780,7 +2788,9 @@ class Analyzer:
             group = [it]
             while j < n:
                 nx = ordered[j]
-                if not isinstance(nx, Line) or self._breaks(group[-1], nx, flows_right[it.flow], group):
+                if not isinstance(nx, Line) or self._breaks(
+                        group[-1], nx, flows_right[it.flow], group,
+                        ordered[j - 2] if j >= 2 and isinstance(ordered[j - 2], Line) else None):
                     break
                 group.append(nx)
                 j += 1
@@ -2821,44 +2831,73 @@ class Analyzer:
         if o.tag_links or o.tag_form_fields or o.tag_other_annotations:
             self._annotations(page, pno, lines)
 
-    def _breaks(self, a: Line, b: Line, col_right: float, group: list[Line]) -> bool:
-        if a.flow != b.flow:
+    def _breaks(self, a: Line, b: Line, col_right: float, group: list[Line], prev: Line | None = None) -> bool:
+        """Does a new paragraph (a new zone) start at line b, under line a?
+
+        The structural answers (another column, another type size or weight, side by side, a list
+        label, a contents line) are not a matter of taste. What is — the gap, the indent, a short
+        line before — is the analysis' own rule, `h`, and what the tool has learned from people
+        (V4.28, core/zonelearn.py) may overrule it where the evidence is clear. `prev`: the line
+        above `a` on the page (None when unknown)."""
+        hard, h = self._breaks_h(a, b, col_right, group)
+        if hard:
             return True
+        zm, lg = self.zone_model, self.zone_log
+        if zm is None and lg is None:
+            return h
+        d = h
+        try:
+            from . import zonelearn
+            vec = zonelearn.features(a, b, prev, col_right)
+            if zm is not None:
+                d = zm.decide(vec, h)
+            if lg is not None and self._zone_ctx is not None:
+                pno, page = self._zone_ctx
+                zonelearn.log_pair(lg, pno, to_pdf(page, a.bbox), to_pdf(page, b.bbox), vec, h, d, b.text)
+        except Exception:
+            d = h
+        return d
+
+    def _breaks_h(self, a: Line, b: Line, col_right: float, group: list[Line]) -> tuple[bool, bool]:
+        """(structural, rule): True, True where nothing may overrule the answer; else False and the
+        answer of the analysis' own rule for the gap, the indent and the short line."""
+        if a.flow != b.flow:
+            return True, True
         size = max(a.size, b.size)
         if abs(a.size - b.size) > 0.6:
-            return True
+            return True, True
         if a.bold != b.bold and (len(a.text) < 90 or len(b.text) < 90):
-            return True
+            return True, True
         from .compat import house
         v5 = house()
         if v5 and a.bold and b.bold and len(a.text) < 40 and len(b.text) < 90 and _all_caps(a.text) \
                 and not _all_caps(b.text):
-            return True                # "METHODS" over "Study population and settings"
+            return True, True          # "METHODS" over "Study population and settings"
         gap = b.y0 - a.y1
-        if gap > 0.62 * size:
-            return True
         if gap < -0.5 * size:           # overlapping / side by side
-            return True
+            return True, True
         if b.x0 > a.x1 - 1:
-            return True
+            return True, True
         if self.opts.detect_lists and self._label(b) is not None:
-            return True
+            return True, True
         if self.opts.detect_toc and TOC_RE.match(b.text):
-            return True
+            return True, True
+        if gap > 0.62 * size:
+            return False, True
         short = a.x1 < col_right - 2.2 * size
         # "… Act 525.³⁻⁵" / "… output.¹⁸": the note marks after the full stop
         # do not hide the end of the sentence
         if short and (_without_marks(a) if v5 else a.text.rstrip()).endswith((".", "?", "!", ":", "”", '"')):
-            return True
+            return False, True
         if b.x0 > a.x0 + 0.8 * size and len(group) > 1 and short:
-            return True
+            return False, True
         # a journal's first-line indent after a full line (justified, or
         # filled out by its note marks: "… Act 525.³⁻⁵ ⁸ ¹⁰ ¹¹" | "  Ghana has …")
         if v5 and len(group) > 1 and a.x0 + 0.8 * size < b.x0 < a.x0 + 3 * size \
                 and all(abs(g.x0 - a.x0) < 1.0 for g in group[1:]) \
                 and _without_marks(a).endswith((".", "?", "!", ":", "”", '"')):
-            return True
-        return False
+            return False, True
+        return False, False
 
     def _vocab(self, pno: int) -> set:
         """The words this page prints normally.
@@ -4115,6 +4154,14 @@ class Analyzer:
     # --------------------------------------------------------------- run
     def run(self) -> DocModel:
         self.progress(0.02, "reading text")
+        try:                                     # V4.28: what people taught about cutting zones
+            from . import zonelearn
+            if self.zone_log is None and zonelearn.wanted(self.opts):
+                self.zone_log = []                # every pair of lines decided on, for learning
+                self.zone_model = zonelearn.pick(self.opts, self.path)
+        except Exception as exc:
+            self.zone_log, self.zone_model = None, None
+            self.model.warnings.append(f"learned zones are not used ({exc})")
         self._doc_stats()
         self.model.lang = self._doc_lang()
         self.model.page_sizes = [(frame(p).width, frame(p).height) for p in self.doc]
@@ -4290,6 +4337,11 @@ def _analyze_chunk(path: str, opts_d: dict, ai_d: dict | None, shared: dict,
     a.slots = shared["slots"]
     a.image_pages = collections.Counter(shared["image_pages"])
     a.toc = shared["toc"]
+    if shared.get("zone_model"):
+        from .zonelearn import ZoneModel
+        a.zone_model = ZoneModel.from_dict(shared["zone_model"])
+    if shared.get("zone_log"):
+        a.zone_log = []
     a.page_lines = [[] for _ in range(a.doc.page_count)]
     for p in pages:
         a.page_lines[p] = collect_lines(a.doc[p])
@@ -4298,7 +4350,7 @@ def _analyze_chunk(path: str, opts_d: dict, ai_d: dict | None, shared: dict,
             a._page(p)
         except Exception as exc:
             a.model.warnings.append(f"page {p + 1}: analysis failed ({exc})")
-    out = {"model": a.model.to_json(), "headings": [h.id for h in a.heading_nodes]}
+    out = {"model": a.model.to_json(), "headings": [h.id for h in a.heading_nodes], "zones": a.zone_log or []}
     a.doc.close()
     a.pdf.close()
     return out
@@ -4773,6 +4825,8 @@ def analyze(path: str, opts: Options | None = None, progress: Callable | None = 
     if pages is not None:
         a.only_pages = set(pages)
     m = a.run()
+    m.zone_log = a.zone_log                # not part of the saved model: the pipeline writes it next to it
+    m.zone_pages = set(pages) if pages is not None else None
     from .model import convert_empty_headers
     convert_empty_headers(m)           # empty header cells are data cells (TD)
     try:

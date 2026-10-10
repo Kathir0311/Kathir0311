@@ -1,4 +1,4 @@
-# Dezquare PDF Accessibility Studio v4.27.0
+# Dezquare PDF Accessibility Studio v4.28.0
 
 Automated PDF/UA-1 tagging plus an Acrobat-style manual tag editor.
 
@@ -23,12 +23,17 @@ Production (single process — the job queue and model cache live in-process):
 
 ```bash
 pip install waitress
-waitress-serve --port=8000 app:app
+python app.py                                  # V4.28: uses waitress when it is installed, 24 threads
+# or:  waitress-serve --threads=24 --port=8000 app:app
 ```
 
 Environment variables: `PDFUA_JOBS` (jobs folder), `PDFUA_CONFIG` (settings file),
 `PDFUA_WORKERS` (files at the same time when not set in Settings), `PDFUA_JOB_TIMEOUT_MIN`
 (a job running longer is stopped, default 480 — the AI checks of a big book take time), `HOST`, `PORT`.
+V4.28, for many people at the same time: `PDFUA_THREADS` (web-server threads, default 24; waitress's own default
+of 4 would let four people's requests block everybody else's), `PDFUA_SERVER=flask` (force Flask's development
+server), `PDFUA_LEARNERS` (learner processes at the same time, default 2), `PDFUA_LIVE_DELAY` (seconds after the
+last edit before the tool learns from it, default 4).
 
 **Queue.** Each analyse / build / AI-alt-text run happens in its own Python
 process (`core/jobrunner.py`), because PyMuPDF is not thread-safe — running it
@@ -1370,6 +1375,9 @@ python tests/teachers_guide_test.py    # V4.24.0 Academain Teacher's Guide: H1�
 python tests/brain_test.py             # V4.25.0 the self-learning AI brain: samples studied, its own model trained, every client's samples, feedback, trust, learning curve
 python tests/selflearn_test.py         # V4.26.0 learned code written and checked, memory, one fix → the rest, inventory + coverage, privacy guard, rule book
 python tests/selfimprove_test.py       # V4.27.0 honest probabilities (calibration, cross-validation), one file one convention, tighter rules, newest memory wins
+python tests/zonelearn_test.py         # V4.28.0 where zones are cut, learned from what people change: per client, for everybody, the parallel analysis decides the same
+python tests/zonelearn_app_test.py     # V4.28.0 one cut by hand → the same cut offered elsewhere in the file → learned live by a learner process → approved → the next file is right
+python tests/multiuser_test.py         # V4.28.0 many people at once: the lock, the fair queue, config.json, who else is in the file, no lost change (PDFUA_LOCK_AUDIT=1)
 python app.py & python tests/api_test.py && python tests/ui_test.py /tmp
 ```
 
@@ -1405,6 +1413,10 @@ core/learn.py       sample files: what a client's finished files teach
 core/brain.py       the self-learning AI brain (V4.25) — honest probabilities, one convention per file (V4.27)
 core/codegen.py     the learning engine writes its own rules as Python (V4.26) — one tight rule per look (V4.27)
 core/memory.py      alt texts and readings people gave, used again (V4.26)
+core/zonelearn.py   where a zone is cut or joined, learned from what people change (V4.28)
+core/livelearn.py   the learner process: what people changed in a file, learned a few seconds later (V4.28)
+core/locks.py       the one-at-a-time lock that serves the waiting in the order they came (V4.28)
+core/fairqueue.py   the work queue that serves each person in turn (V4.28)
 core/inventory.py   everything in the PDF, and what no tag holds (V4.26)
 core/kb.py          the offline rule book (V4.26)
 core/netguard.py    the privacy guard: nothing leaves the server (V4.26)
@@ -2470,3 +2482,104 @@ Checked: every test suite that runs without a server passes — the 45 of V4.26 
 without it on the same file, levels, the review order, one rule for each look, the one-file and wrong-in-one-file
 checks, newest memory, an older database, the delayed training); `api_test.py` and `ui_test.py` run through against
 a running server, and the new Client-tab list and the admin numbers were rendered in a browser.
+
+
+**V4.28.0 — The tool learns where people cut and join zones, live, and many people can work at the same time.**
+
+When a publisher sets its paragraphs apart by a small gap, the analysis takes a page of paragraphs for **one zone** — and
+people draw a zone round each paragraph, file after file, because the rule that decides "same zone or a new one?" never
+learned. V4.25 – V4.27 learned *which tag* a zone gets (P → H2), the alt texts and the readings; V4.28 learns **where a zone
+begins and ends** — from what people change, while they work — and uses it for the next files of that client and of
+clients that work the same way. The editor, too, now serves many people at once.
+
+*1. What it learns (`core/zonelearn.py`).*
+* **The pairs.** In every analysis, for each two lines of running text one under the other, the tool decides "same zone"
+  or "a new zone". It now writes down each such pair — 27 numbers (the gap and the line pitch in em, the indent, whether
+  the line above is short and how it ends, how the line below begins, a change of size, weight, italic or font, the words
+  in each line …), the answer of its rule and what it decided — in `zone_pairs.npz` in the file's folder.
+* **The corrections.** When the tags change (a zone drawn, cut, joined, removed), the tags are read against the pairs: one
+  text tag holds both lines → "same zone"; two tags → "a new zone"; a line in a table, a list or no tag → "cannot tell"
+  and left out. Where the tags say something else than the tool decided, a person corrected it. A zone cut or joined by hand
+  weighs 4; a pair on a page a person corrected, left as it was, 0.5; a pair of an approved file 1.0; what a reviewer
+  (QA, Final QA, admin) did ×1.5; the other clients' examples ×0.25 in a client's own model.
+* **A small model beside the rule.** For each client, and one for everybody: a logistic model that **moves the rule's
+  answer** by at most ±2.5 log-odds — it overrules the rule only where it is at least 65 % (or at most 35 %) sure, and
+  where the pairs look like nothing it has seen it stays with the rule. Plain numpy, trained in a fraction of a second.
+* **It must earn its place.** A model is used only when, on files it was **not** trained on (held out file by file), it
+  fixes at least 3 pairs and at least twice as many as it spoils plus one — with at least 4 corrections by hand (6 when
+  they come from one file only: "waits for a second file or 6"). The model for everybody waits until two clients have
+  corrected, and is then tested client by client. A model that has not earned its place is listed with the reason.
+* **Which model.** The client's own; for a client without one, the model of the most similar client (the pairs look
+  alike: ≥ 0.7, from ≥ 2 files); otherwise the model for everybody. In an option (*Learn where zones are cut*, on by default) and in
+  Admin → 🧠 AI Brain → Learning (off for everybody). The client house styles (Kriyadocs …) keep their own rules.
+* **Where it is used.** In the analysis of every page (the page-parallel analysis decides exactly as the single-process one)
+  and in a zone drawn by hand that covers several paragraphs.
+
+*2. Live.* A few seconds after the **last edit** (`PDFUA_LIVE_DELAY`, 4 s; a person who never pauses is learned from every
+45 s) the tool starts a **learner process** (`core/livelearn.py`) for the file. It records the tags that changed (V4.25),
+the alt texts and readings (V4.26) and the zones (V4.28), and trains the zone models again when something was corrected —
+so the next file anybody uploads, even while you are still working, is already right. It does not wait for the build.
+Build and approval make the file a sample, and its zone rows replace the live ones; a tagged file uploaded as a sample
+teaches too (its tags are the answers). Undo the cut and the next run forgets it.
+
+*3. The same cut elsewhere in the same file.* After you cut (or join) a zone by hand, the editor looks in the file for places
+that look the same — the same space between the lines, the same indent, a word split at the end of the line, a lower-case
+start — and are still one zone, and offers **Cut all 9** (“🧠 Learned from your zone fix”, with the start of each line;
+*Show them* selects the first). One click, one Ctrl+Z. The links and spans inside a zone stay with the text they are printed
+in, and a cut never goes through one of them.
+
+*4. Many people at the same time.*
+* **The one-at-a-time lock.** MuPDF is not thread-safe, so a request that opens a PDF takes the MuPDF lock; before, *every*
+  request about a file did. Now reading and changing tags (a role, a move, the summary, the lint, the status, who is
+  here, a picture already drawn) never waits for it, and the requests that need it are served **in the order they came**
+  (`core/locks.py`) — none waits for ever while others pass it. A page picture is drawn once, for everybody, and kept next to
+  the file; a browser that has it gets a 304. The page geometry is read once, not at every load. Two people's requests
+  about one file are put in order, one file's work never waits for another file's.
+* **Learning outside the editor.** The learner runs in its own process (at most `PDFUA_LEARNERS`, 2, at a time; one for each
+  file, the edits made meanwhile learned right after) — it never takes the editor's lock.
+* **A fair queue** (`core/fairqueue.py`). The files waiting to be analysed or built are served **in turns, one file of each
+  person** — somebody who puts in forty files does not keep the others waiting; an urgent (or high) file goes first, and one
+  made urgent moves up at once; a build somebody waits for goes before a new upload of the same priority; the brain's
+  background training goes last. The queue position shown is the real one.
+* **Who else is in the file.** The editor asks every 6 s who else has the file open and whether the tags changed since it
+  loaded them: a chip “👥 Anna” in the header; when somebody else changed the tags and you are not typing, their changes are
+  shown by themselves, otherwise a bar “Anna changed the tags in this file — *Show their changes*”. Undo asks first when
+  somebody else made the last change in the last 15 minutes (the history belongs to the file).
+* **The settings file.** Every change of `config.json` is one step (read, change, write under a lock, through a temporary
+  file of its own), so two admins saving at the same moment no longer lose one's change — and **a saved setting no longer
+  deletes the table / list templates and the privacy settings** (until V4.27, any save of the settings, of a profile or of the
+  learning switches dropped them).
+* **The server.** `python app.py` uses **waitress** when it is installed, with `PDFUA_THREADS` (24) threads — its own
+  default of 4 would let four slow requests block everybody; the tags of the 24 files used last stay in memory
+  (`PDFUA_MODEL_CACHE`), not every file ever opened; the pictures kept for a file are limited. Admin → System shows how many are in
+  the editor now, who waits in the queue, how often and how long a request waited for the PDF lock, and the learner.
+* Measured on one 4-core machine with small files (clients in the same process, so a floor for what a real network costs):
+  16 people at the same time — requests per second 98 → 249; opening the tags 123 → 35 ms (median); a page picture 134 → 7 ms;
+  changing a role 120 → 49 ms; summary 88 → 32 ms. With one person nothing is slower (28 → 33 requests per second).
+
+*Honest limits.* The zone model decides one thing — two lines of running text one under the other: the same zone or a new
+one. Columns, tables, lists, headings and the reading order are still decided by the analysis and its checks. It needs
+corrections to learn from — at least 40 pairs and 4 zones corrected by hand (6 from one file) — so a client's first file is
+only helped by the cut-the-same-places offer, and by the model of a similar client or for everybody if there is one; it
+learns the habit it is shown, so a client whose files differ from one another gets less out of it. Nobody is locked out
+of a file: when two people change the same tag at the same moment the later change wins (both are in the history and the
+banner says who changed what). There is still **one server process** — the queue and the caches live in it — and one
+PDF is opened at a time by the requests that must open it; twenty people editing tags is smooth, a hundred drawing zones
+at the same moment would queue. A learner process takes ~100–200 MB while it runs.
+
+New: option `learn_zones`; Admin → 🧠 AI Brain → *Zones* (models, why, **Train zones now**) and the *Learn where zones are
+cut* switch; `python cli.py --brain-status` and `python -m core.zonelearn [train --force]`; `GET /api/job/<id>/presence`,
+`GET /api/job/<id>/zones/similar`, `POST /api/job/<id>/zones/similar/apply`, `POST /api/admin/zones/train`. New tables in
+`sample_files/samples.db`: `zone_rows`, `zone_models` (in **⤓ Database backup**); `zone_pairs.npz` in each file's folder, and
+`<sample>.zone.npz` next to a sample file. Environment: `PDFUA_THREADS`, `PDFUA_SERVER=flask`, `PDFUA_LEARNERS`,
+`PDFUA_LIVE_DELAY`, `PDFUA_MODEL_CACHE`, `PDFUA_LOCK_AUDIT=1` (tests: a request that opens a PDF without the lock fails).
+
+Checked: every test suite of V4.27 passes as it was (the live-learning wait of `selflearn_test.py` now waits for the learner
+process instead of a fixed 6 s); new `tests/zonelearn_test.py` (a client's four files corrected → the next file has every
+paragraph in a zone of its own while another client's is untouched; the other way round for a double-spaced manuscript, where
+every line is "far" from the next one; a second client wakes the model for everybody and a client never seen before is right;
+the parallel and the single-process analysis log the same pairs), `tests/zonelearn_app_test.py` (a cut by hand → the offer →
+applied, undone, redone → learned by the learner process → built, the tags sound, approved → the next upload is right; the
+admin switch) and `tests/multiuser_test.py` (the lock, the queue, `config.json`, ten people at once with two in one file and no
+lost change, the lock audit, who is in the file, undo of somebody else's change). `api_test.py` and `ui_test.py` run through
+against a running server (waitress), and the chip, the bar, the offer and Admin → System were rendered in a browser.

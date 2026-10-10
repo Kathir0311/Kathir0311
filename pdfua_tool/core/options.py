@@ -135,6 +135,7 @@ class Options:
     samples_scope: str = "client"          # V4.25: client (its own + common samples) | all (every client's, the most similar files count most)
     ai_brain: bool = False                 # V4.25: the self-learning brain decides every text tag (core/brain.py)
     ai_brain_max: int = 45                 # V4.25: at most this many doubtful tags per file go to the AI
+    learn_zones: bool = True               # V4.28: where a zone is cut (a paragraph break) follows what people taught the tool
     brain_strength: str = "balanced"       # V4.25: careful | balanced | bold — how sure the brain must be to change a tag
     learn_feedback: bool = False           # V4.25 (set by the app): a built file's fixes teach the brain
 
@@ -288,6 +289,7 @@ META: dict[str, tuple[str, str, str, list[str] | None]] = {
     "sample_rules": ("Client structure from the samples", "V4.21: the structure the client's samples always use is followed — a table's or figure's caption is put where 80 % of the sample captions are (inside first / inside last / before / after)", "Client", None),
     "samples_scope": ("Samples to learn from", "V4.25 · client: the samples of this profile's client and the common ones · all: every client's samples — the files most like this one (same kind of document, same words and type styles) count most, so any PDF is tagged from everything the tool has learned", "Client", ["client", "all"]),
     "ai_brain": ("AI brain (self-learning)", "V4.25: every text tag of the file is decided by the brain — the analysis' rules, the nearest sample tags, the tool's own trained model, the client's style map and wording, each weighed by how often it was right before; what stays doubtful goes to the local AI (Ollama) with the PDF/UA rules, the client's rules and the most similar finished examples. Every change has a note “brain: …”; tags it is still unsure of are outlined for review. It learns from every built and approved file", "AI", None),
+    "learn_zones": ("Learn where zones are cut", "V4.28: the tool writes down every place it decided whether a new paragraph (a new zone) starts, and learns from what people change — a zone drawn over two paragraphs that a person cuts, two zones a person joins. Once a publisher's pattern has been seen often enough, and tried on pages it was not learned from, the next files of that publisher (and of publishers whose files look alike) are cut that way by themselves. Where the tool's own rule is not overruled, nothing changes", "Client", None),
     "ai_brain_max": ("AI brain: tags asked per file", "At most this many doubtful tags of one file go to the local AI (15 per question). 0: the brain decides without the AI", "AI", None),
     "brain_strength": ("AI brain: how bold", "careful: changes a tag only when the evidence is overwhelming · balanced (recommended) · bold: follows the learned sources sooner", "AI", ["careful", "balanced", "bold"]),
     "client": ("Samples client", "Whose sample files this profile learns from (Admin → Samples). Empty: the profile's own name. Common samples (for every client) are always used too", "Client", None),

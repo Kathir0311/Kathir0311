@@ -25,6 +25,7 @@ import pymupdf
 
 from . import checker
 from . import contrast as contrast_mod
+from .locks import replace_file
 from .analyzer import analyze
 from .build import build
 from .compat import use as use_engine
@@ -197,7 +198,7 @@ def save_model(job: str, model: DocModel) -> None:
     tmp = os.path.join(job, "model.json.tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(model.to_json())
-    os.replace(tmp, os.path.join(job, "model.json"))
+    replace_file(tmp, os.path.join(job, "model.json"))
 
 
 def save_auto_model(job: str, model: DocModel) -> None:
@@ -205,7 +206,7 @@ def save_auto_model(job: str, model: DocModel) -> None:
     tmp = os.path.join(job, "auto_model.json.tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(model.to_json())
-    os.replace(tmp, os.path.join(job, "auto_model.json"))
+    replace_file(tmp, os.path.join(job, "auto_model.json"))
 
 
 def load_auto_model(job: str, opts: Options, fresh: bool = False,
@@ -229,7 +230,21 @@ def load_auto_model(job: str, opts: Options, fresh: bool = False,
     o.ai_alt_text_auto = False
     m = analyze(os.path.join(job, "working.pdf"), o, progress)
     save_auto_model(job, m)
+    _save_zone_pairs(job, m)
     return m
+
+
+def _save_zone_pairs(job: str, model: DocModel) -> int:
+    """V4.28: every pair of lines the analysis decided on, next to the model (core/zonelearn.py)."""
+    zl = getattr(model, "zone_log", None)
+    if zl is None:
+        return 0
+    try:
+        from . import zonelearn
+        return zonelearn.save_pairs(job, zl, only_pages=getattr(model, "zone_pages", None))
+    except Exception as exc:
+        model.warnings.append(f"zones: the pairs could not be kept ({exc})")
+        return 0
 
 
 def load_model(job: str) -> DocModel:
@@ -459,6 +474,7 @@ def prepare(job: str, opts: Options, *, ai_cfg=None,
     save_model(job, model)
     if mode != "import":
         save_auto_model(job, model)
+        result["zone_pairs"] = _save_zone_pairs(job, model)
     result["nodes"] = len(model.nodes)
     result["pages"] = model.page_count
     result["title"] = model.title

@@ -131,15 +131,18 @@ STOP = set("the and for that with this from are was were have has had not but yo
 
 def ensure(c: sqlite3.Connection) -> None:
     c.executescript(SCHEMA)
-    for mod in ("codegen", "memory", "kb"):          # V4.26: learned code, memories, the rule book
+    for mod in ("codegen", "memory", "kb", "zonelearn"):   # V4.26: learned code, memories, the rule book · V4.28: zones
         try:
             __import__(f"{__package__}.{mod}", fromlist=["ensure"]).ensure(c)
         except Exception:
             pass
-    try:
-        c.execute("ALTER TABLE feedback ADD COLUMN node TEXT DEFAULT ''")
-    except sqlite3.OperationalError:
-        pass
+    fb_cols = {r[1] for r in c.execute("PRAGMA table_info(feedback)")}
+    for col in ("node TEXT DEFAULT ''", "who TEXT DEFAULT ''"):        # V4.26: node · V4.28: who made the fix
+        if col.split()[0] not in fb_cols:
+            try:
+                c.execute(f"ALTER TABLE feedback ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
     have = {r[1] for r in c.execute("PRAGMA table_info(brain_models)")}
     for col in ("logloss REAL", "ece REAL", "temperature REAL", "folds INTEGER"):     # V4.27: honest probabilities
         if col.split()[0] not in have:
@@ -837,7 +840,7 @@ def train(trigger: str = "manual", force: bool = False, progress=None) -> dict:
 
 
 def train_all(trigger: str = "after learning", force: bool = False) -> dict:
-    """The brain's model again, then the learned code (V4.26)."""
+    """The brain's model again, then the learned code (V4.26) and the zone models (V4.28)."""
     out = {"train": train(trigger=trigger, force=force)}
     try:
         from . import codegen
@@ -845,6 +848,11 @@ def train_all(trigger: str = "after learning", force: bool = False) -> dict:
         out["code"] = codegen.synthesize(ai_cfg=cfg if lc.get("ai_study", True) else None)
     except Exception as exc:
         out["code"] = {"ok": False, "error": str(exc)[:300]}
+    try:                                         # V4.28: where zones are cut
+        from . import zonelearn
+        out["zones"] = zonelearn.train_all(force=force)
+    except Exception as exc:
+        out["zones"] = {"ok": False, "error": str(exc)[:300]}
     return out
 
 
@@ -1723,7 +1731,7 @@ def learn_outcome(c: sqlite3.Connection, job: str, client: str, model, auto=None
     return res
 
 
-def record_feedback(job_path: str, client: str, model, auto) -> dict:
+def record_feedback(job_path: str, client: str, model, auto, by: str = "") -> dict:
     """A built file: the tags people changed from the tool's proposal are
     remembered (they weigh less than an approved file's, until it is one)."""
     if auto is None or model is None:
@@ -1753,13 +1761,13 @@ def record_feedback(job_path: str, client: str, model, auto) -> dict:
                 if f is None:
                     continue
                 rows.append((job, client, was, now, text[:300], L.norm(text) if len(text.split()) <= 14 else "",
-                             f.get("font") or "", *[f.get(k) for k in L.FEATURES], _now(), n.id))
+                             f.get("font") or "", *[f.get(k) for k in L.FEATURES], _now(), n.id, by))
         finally:
             pages.close()
     with L.connect() as c:
         c.execute("DELETE FROM feedback WHERE job=? OR created < ?", (job, _ago(540)))
         c.executemany("INSERT INTO feedback (job, client, from_role, role, text, norm, font, " + ", ".join(L.FEATURES)
-                      + ", created, node) VALUES (" + ",".join("?" * (9 + len(L.FEATURES))) + ")", rows)
+                      + ", created, node, who) VALUES (" + ",".join("?" * (10 + len(L.FEATURES))) + ")", rows)
         auto_r, fin = _final_roles(auto), _final_roles(model)
         total = sum(1 for nid, r in fin.items() if (r in L.TEXT_ROLES or r == "Artifact") and nid in auto_r)
         same = sum(1 for nid, r in fin.items() if (r in L.TEXT_ROLES or r == "Artifact") and auto_r.get(nid) == r)

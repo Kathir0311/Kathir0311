@@ -904,6 +904,23 @@
       x.summary ? el('div', { class: 'small', text: x.summary }) : '',
       (x.rules || []).length ? el('ul', { class: 'small' }, ...(x.rules || []).map((r) => el('li', {}, r.tag ? el('span', { class: 'chip', text: r.tag }) : '', ' ' + (r.rule || '')))) : ''))
       : [el('p', { class: 'small muted', text: d.ai ? 'The AI studies each new sample by itself — or press “AI study of every sample”.' : 'Switch the AI on in Settings: the local AI then studies every sample and writes each client\u2019s tagging rules.' })]));
+    // zones learned from people (V4.28)
+    const zn = d.zones || {};
+    $('znCount').textContent = zn.rows ? `${zn.corrections} correction(s) in ${zn.refs} file(s) · ${zn.rows.toLocaleString()} pairs` +
+      (d.live && d.live.runs ? ` · learned live ${d.live.runs}×` : '') : '';
+    const zb = $('znTable').querySelector('tbody');
+    const ZS = { active: 'ok', waiting: 'warn', candidate: 'warn', off: '' };
+    zb.replaceChildren(...(zn.models || []).map((m) => el('tr', {},
+      el('td', { text: m.scope || 'everybody' }), el('td', { text: String(m.n) }), el('td', { text: String(m.explicit) }),
+      el('td', { text: String(m.refs) }), el('td', { text: m.acc_model != null ? `${m.fixed} / ${m.broken}` : '—' }),
+      el('td', { text: m.acc_model != null ? `${pct(m.acc_rule)} → ${pct(m.acc_model)}` : '—' }),
+      el('td', {}, el('span', { class: 'chip ' + (ZS[m.status] || ''), title: m.note || '', text: m.status })),
+      el('td', { class: 'small' }, m.convention ? el('div', { text: m.convention }) : '',
+        el('div', { class: 'tiny muted', text: (m.why || []).map((x) => `${x.feature} ${x.weight > 0 ? '+' : ''}${x.weight}`).join(' · ') || (m.note || '') })))));
+    if (!(zn.models || []).length) zb.replaceChildren(el('tr', {}, el('td', { colspan: 8, class: 'muted small',
+      text: 'No zone model yet: it starts when people have cut or joined zones in a few places.' })));
+    $('znWho').textContent = Object.keys(zn.people || {}).length ? 'Who taught it (corrections): ' +
+      Object.entries(zn.people).map(([k, v]) => `${k} ${v}`).join(' · ') : '';
     // learned code (V4.26)
     const rules = d.code || [];
     $('cdCount').textContent = rules.length ? `${rules.filter((r) => r.status === 'active').length} active of ${rules.length}` : '';
@@ -955,6 +972,10 @@
     const r = await post(`/api/admin/code/${id}`, { status });
     if (!r.error) { UA.toast(`${id}: ${status === 'active' ? 'on' : 'off'}`); loadBrain(); }
   }
+  $('znTrain').addEventListener('click', async () => {
+    const r = await post('/api/admin/zones/train', {});
+    if (!r.error) { UA.toast(`Zone models: ${(r.models || []).length} trained`); setTimeout(loadBrain, 500); }
+  });
   $('cdWrite').addEventListener('click', async () => {
     const r = await post('/api/admin/code/write', {});
     if (!r.error) { UA.toast(r.started ? 'The learning engine is writing its rules…' : 'The brain is busy — try again in a moment'); setTimeout(loadBrain, 1500); }
@@ -1091,7 +1112,20 @@
       row('Files by stage', `${st.review || 0} to review · ${st.done || 0} built · ${st.error || 0} failed · ${(st.queued || 0) + (st.processing || 0)} waiting/working`),
       row('At the same time', `${(d.parallel || {}).files || '?'} files, ${(d.parallel || {}).page_procs || '?'} cores each`),
       row('AI', el('span', {}, el('span', { class: 'chip ' + (d.ai.enabled ? 'ok' : 'warn'), text: d.ai.enabled ? 'on' : 'off' }), ' ', el('span', { class: 'small', text: `${d.ai.base_url || ''} ${d.ai.text_model ? '· ' + d.ai.text_model : ''}` }))),
-      row('Learning', Object.entries(d.learning || {}).map(([k, v]) => `${k.replace('_', ' ')} ${v ? 'on' : 'off'}`).join(' · ')));
+      row('Learning', Object.entries(d.learning || {}).map(([k, v]) => `${k.replace('_', ' ')} ${v ? 'on' : 'off'}`).join(' · ')),
+      ...loadRows(d, row));
+  }
+  // V4.28: how busy the server is — is the one-at-a-time lock, the work queue or the learner a bottleneck?
+  function loadRows(d, row) {
+    const ld = d.load || {}, mu = ld.mupdf || {}, q = ld.queue || {}, lv = d.live || {};
+    const editing = Object.entries(ld.editing || {});
+    const people = new Set(editing.flatMap(([, who]) => who));
+    const waiting = Object.entries(ld.people_waiting || {}).map(([w, n]) => `${w} ${n}`).join(', ');
+    return [
+      row('In the editor now', people.size ? `${people.size} ${people.size === 1 ? 'person' : 'people'} in ${editing.length} file(s)` : 'nobody'),
+      row('Files waiting', q.waiting ? `${q.waiting} (${waiting}) · waited ${q.avg_wait_s}s on average, ${q.max_wait_s}s at most` : 'none'),
+      row('One PDF at a time', `${mu.requests || 0} requests · ${mu.waited || 0} had to wait (${mu.avg_wait_ms || 0} ms on average, ${mu.max_wait_ms || 0} ms at most) · ${mu.waiting_now || 0} waiting now`),
+      row('Learning from edits', `${lv.runs || 0} runs · ${lv.running || 0} now · ${lv.waiting || 0} waiting${lv.failed ? ' · ' + lv.failed + ' failed' : ''}`)];
   }
   $('cuPreview').addEventListener('click', async () => {
     const r = await post('/api/admin/cleanup', { which: $('cuWhich').value, days: $('cuDays').value, preview: true });

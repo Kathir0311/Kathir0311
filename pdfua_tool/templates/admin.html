@@ -256,7 +256,16 @@
         <label class="switch"><input type="checkbox" data-learn="brain"><span class="knob"></span><span><b>AI brain decides the tags</b><i>profiles with “AI brain” on (Smart AI, Best quality) let the brain decide every text tag</i></span></label>
         <label class="switch"><input type="checkbox" data-learn="feedback"><span class="knob"></span><span><b>Every built file teaches</b><i>what people change in the tool's proposal is remembered at each build (an approved file counts more)</i></span></label>
         <label class="switch"><input type="checkbox" data-learn="ai_study"><span class="knob"></span><span><b>AI studies each sample</b><i>the local AI writes the client's tagging rules and the document type for every new sample</i></span></label>
+        <label class="switch"><input type="checkbox" data-learn="zones"><span class="knob"></span><span><b>Learn where zones are cut</b><i>a zone a person cuts in two or joins is learned live; the next files of that client are cut the same way (a model has to be right on pages it was not trained on first)</i></span></label>
       </div>
+    </div>
+    <div class="card" id="zoneCard">
+      <div class="dhead"><h3>✂ Zones — where a paragraph starts, learned from people</h3><div class="spacer"></div>
+        <span class="tiny muted" id="znCount"></span>
+        <button class="sm" id="znTrain" title="Train the zone models again on every example">⚙ Train zones now</button></div>
+      <p class="tiny muted">Every time the tool decides whether two lines are one paragraph (one zone) it writes the pair down. When a person cuts a zone in two, or joins two, that is a correction; the corrections of a client (and of every client, once two agree) teach a small model that moves the tool's own rule — only where the evidence is, and only after it has been right on pages and files it was not trained on. What people do is learned a few seconds after the edit, in a process of its own.</p>
+      <div class="tablewrap"><table class="list" id="znTable"><thead><tr><th>For</th><th>Examples</th><th>Corrections</th><th>Files</th><th>Fixes / spoils (held out)</th><th>Right with the rule → with the model</th><th>Status</th><th>What it learned</th></tr></thead><tbody></tbody></table></div>
+      <div class="tiny muted" id="znWho"></div>
     </div>
     <div class="card">
       <div class="dhead"><h3>✍ Learned code — rules the learning engine wrote itself</h3><div class="spacer"></div>

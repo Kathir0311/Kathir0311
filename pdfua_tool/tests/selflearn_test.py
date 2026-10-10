@@ -151,10 +151,15 @@ def main() -> int:
             elif k == 0 and t == "A study of stable samples":
                 c.post(f"/api/job/{jid}/node/{n['id']}", json={"actual_text": "A study of samples that stay stable"})
         jobs.append(jid)
-    # live learning: the fixes are remembered a few seconds after the last edit, with no build
-    time.sleep(6)
-    with learn.connect() as db:
-        live = db.execute("SELECT COUNT(*) n FROM feedback WHERE job=?", (jobs[0],)).fetchone()["n"]
+    # live learning: the fixes are remembered a few seconds after the last edit, with no build —
+    # by a learner process of its own (V4.28), so wait for it instead of for a fixed time
+    live = 0
+    for _ in range(80):
+        with learn.connect() as db:
+            live = db.execute("SELECT COUNT(*) n FROM feedback WHERE job=?", (jobs[0],)).fetchone()["n"]
+        if live >= 4:
+            break
+        time.sleep(0.5)
     ok(live >= 4, f"live learning without a build: {live} fix(es)")
     for jid in jobs:
         c.post(f"/api/job/{jid}/build", json={})
