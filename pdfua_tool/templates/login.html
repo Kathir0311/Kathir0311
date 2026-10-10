@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="author" content="Kathir — Founder &amp; CEO, Dezquare Tech">
+<meta name="description" content="Dezquare PDF Accessibility Studio — PDF/UA tagging, checking and remediation.">
+<title>Sign in — Dezquare PDF Accessibility Studio</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_v }}">
+</head>
+<body class="loginpage">
+<div class="loginbg" aria-hidden="true"><i></i><i></i><i></i><span class="grid"></span></div>
+
+<main class="lg2">
+  <!-- the product, at a glance -->
+  <section class="lghero" aria-label="About the application">
+    <div class="lgbrand"><span class="mark big">UA</span>
+      <div><b>Dezquare</b><div class="small lgsub">PDF Accessibility Studio · v{{ version }}</div></div></div>
+    <h2 class="lgtitle">Accessible PDFs,<br><span class="lggrad">tagged right the first time.</span></h2>
+    <p class="lglead">PDF/UA tagging, checking and remediation — automatic where it can be, by hand where it must be.</p>
+
+    <!-- what the tool does, as a short animated story (V4.21.4) -->
+    <div class="sc" id="sc" aria-roledescription="carousel" aria-label="What the studio does">
+      <div class="scstage">
+        <!-- 1 auto-tag -->
+        <article class="scs on" data-i="0" aria-label="Auto-tag">
+          <div class="scart">
+            <div class="lgpage">
+              <span class="ln h"></span><span class="ln"></span><span class="ln"></span><span class="ln s"></span>
+              <span class="ln li"></span><span class="ln li"></span><span class="ln li s"></span>
+              <span class="tb"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+              <b class="tag t1">H1</b><b class="tag t2">P</b><b class="tag t3">L</b><b class="tag t4">Table</b>
+              <span class="scan"></span>
+            </div>
+            <div class="lgtick">✓ tagged</div>
+          </div>
+          <div class="sctxt"><b>Upload — it tags itself</b>
+            <p>Headings, paragraphs, lists, tables, figures, captions, links and the reading order — proposed in one pass, batch after batch.</p></div>
+        </article>
+        <!-- 2 tables and lists -->
+        <article class="scs" data-i="1" aria-label="Tables and lists">
+          <div class="scart">
+            <div class="scgrid">
+              <i class="th">Group</i><i class="th">Count</i><i class="th">Mean</i>
+              <i>Girls</i><i>38</i><i>3.7</i><i>Adults</i><i>218</i><i>4.3</i>
+              <b class="o o1">1</b><b class="o o2">2</b><b class="o o3">3</b><b class="o o4">4</b><b class="o o5">5</b><b class="o o6">6</b>
+            </div>
+            <div class="sclist"><span><em>1.</em> city <u>Traffic is heavy in the city.</u></span><span><em>2.</em> box <u>The big box was heavy.</u></span><span><em>3.</em> knelt <u>He knelt down.</u></span></div>
+          </div>
+          <div class="sctxt"><b>Tables and lists, fixed visually</b>
+            <p>Merge, split, header cells, reading order by clicking, Shift / Ctrl selection — the picture and the grid side by side.</p></div>
+        </article>
+        <!-- links stage -->
+        <article class="scs" data-i="x1" aria-label="Links stage">
+          <div class="scart">
+            <div class="sclinks">
+              <div class="lk"><span class="w">see Table 3</span><i class="arrow"></i><span class="to">Table 3 · p12</span><b class="ok">✓</b></div>
+              <div class="lk"><span class="w">Chapter 2</span><i class="arrow"></i><span class="to">Chapter 2 · p5</span><b class="ok">✓</b></div>
+              <div class="lk"><span class="w">www.example.com</span><i class="arrow"></i><span class="to">web address</span><b class="ok">✓</b></div>
+              <div class="lk"><span class="w">[14]</span><i class="arrow two"></i><span class="to">Reference 14 ↩</span><b class="ok">✓</b></div>
+            </div>
+          </div>
+          <div class="sctxt"><b>Every link in one place — the Links stage</b>
+            <p>Cross-references, footnotes, contents, figures, tables, references, web and e-mail links found for you, one-way or two-way — checked, fixed and tagged.</p></div>
+        </article>
+        <!-- alt text -->
+        <article class="scs" data-i="x2" aria-label="AI alt text generator">
+          <div class="scart">
+            <div class="scalt">
+              <div class="pic"><svg viewBox="0 0 120 80" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><rect x="0" y="0" width="120" height="80" rx="8" class="sky"/><circle cx="92" cy="20" r="9" class="sun"/>
+                <path d="M0 80 L34 38 L56 62 L78 34 L120 80 Z" class="hill"/></svg><span class="scanl"></span></div>
+              <div class="alttxt"><span class="lbl">Alt text</span><span class="typed">Green hills under a bright sun.</span></div>
+            </div>
+          </div>
+          <div class="sctxt"><b>Alt text, written by AI</b>
+            <p>Every figure gets a draft description from the local AI — decorative ones marked as artifacts — ready for you to check and keep.</p></div>
+        </article>
+        <!-- 3 NVDA -->
+        <article class="scs" data-i="2" aria-label="Hear it like NVDA">
+          <div class="scart">
+            <div class="scsr">
+              <div class="scsrhead"><b>H2</b> heading level 2</div>
+              <div class="scwords"><span>Vowel</span> <span>Digraphs,</span> <span>Diphthongs,</span> <span>and</span> <span>Advanced</span> <span>Vowel</span> <span>Sounds</span></div>
+              <div class="scwave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            </div>
+          </div>
+          <div class="sctxt"><b>Hear it the way NVDA reads it</b>
+            <p>Say all with the words lit as they are spoken, quick keys, and every problem a listener would trip over — before your client does.</p></div>
+        </article>
+        <!-- 4 checks -->
+        <article class="scs" data-i="3" aria-label="Checked">
+          <div class="scart">
+            <div class="scchk">
+              <div class="scring"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="50" class="bg"/><circle cx="60" cy="60" r="50" class="fg"/></svg><span>PDF/UA</span></div>
+              <ul><li>Tagged content &amp; artifacts</li><li>Headings in order</li><li>Tables with headers</li><li>Alt text &amp; language</li><li>Colour contrast (WCAG)</li></ul>
+            </div>
+          </div>
+          <div class="sctxt"><b>Checked before it ships</b>
+            <p>PDF/UA and WCAG checks with one-click fixes, colour-contrast repair and an Excel report for every file.</p></div>
+        </article>
+        <!-- 5 private, learning, teams -->
+        <article class="scs" data-i="4" aria-label="Private and made for teams">
+          <div class="scart">
+            <div class="scteam">
+              <div class="srv">🔒<b>Your server</b><span>local AI · files never leave</span></div>
+              <div class="flow"><i></i><i></i><i></i></div>
+              <div class="ppl"><span>A</span><span>K</span><span>J</span><span>+</span></div>
+              <div class="learn"><b>Learns your clients</b><span class="bar"><i></i></span></div>
+            </div>
+          </div>
+          <div class="sctxt"><b>Private, learning, made for teams</b>
+            <p>Local AI on your own server, each client's house style learned from approved files, and work given out to your team with roles.</p></div>
+        </article>
+      </div>
+      <div class="scnav" role="tablist" aria-label="Pick a story">
+        <button type="button" class="on" role="tab" aria-label="Auto-tag"><i></i></button>
+        <button type="button" role="tab" aria-label="Tables and lists"><i></i></button>
+        <button type="button" role="tab" aria-label="Links stage"><i></i></button>
+        <button type="button" role="tab" aria-label="AI alt text"><i></i></button>
+        <button type="button" role="tab" aria-label="Hear it like NVDA"><i></i></button>
+        <button type="button" role="tab" aria-label="Checked"><i></i></button>
+        <button type="button" role="tab" aria-label="Private and teams"><i></i></button>
+      </div>
+    </div>
+
+    <!-- the advantages, running by -->
+    <div class="ticker" aria-label="Advantages">
+      <div class="tickrow">
+        <span>✓ PDF/UA-1</span><span>✓ WCAG 2.1 AA</span><span>⚡ Batch auto-tagging</span><span>🖼 AI alt text generator</span><span>🔗 Links stage</span><span>🧠 Local AI</span><span>🔒 Files stay on your server</span><span>📊 Excel report per file</span><span>🔊 NVDA-style check</span><span>🏷 Client house styles</span><span>👥 Team roles &amp; assignment</span>
+        <span aria-hidden="true">✓ PDF/UA-1</span><span aria-hidden="true">✓ WCAG 2.1 AA</span><span aria-hidden="true">⚡ Batch auto-tagging</span><span aria-hidden="true">🖼 AI alt text generator</span><span aria-hidden="true">🔗 Links stage</span><span aria-hidden="true">🧠 Local AI</span><span aria-hidden="true">🔒 Files stay on your server</span><span aria-hidden="true">📊 Excel report per file</span><span aria-hidden="true">🔊 NVDA-style check</span><span aria-hidden="true">🏷 Client house styles</span><span aria-hidden="true">👥 Team roles &amp; assignment</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- sign in -->
+  <section class="lgside">
+    <form class="logincard" method="post" action="{{ url_for('login') }}" autocomplete="on" id="lgForm">
+      <div class="lgbrand mob"><span class="mark big">UA</span>
+        <div><b>Dezquare</b><div class="muted small">PDF Accessibility Studio · v{{ version }}</div></div></div>
+      <h1>Welcome back</h1>
+      <p class="muted small">Sign in — your files and the files given to you are waiting.</p>
+      {% if error %}<div class="loginerr" role="alert">⚠ {{ error }}</div>{% endif %}
+      {% if fresh and not error %}<div class="logininfo" role="status">🔒 The app was closed, so you were signed out. Please sign in again.</div>{% endif %}
+      <label class="lgfield"><span>User name</span>
+        <span class="lgin"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>
+          <input name="username" id="un" autocomplete="username" required autofocus spellcheck="false" autocapitalize="off" placeholder="your user name"></span></label>
+      <label class="lgfield"><span>Password</span>
+        <span class="lgin"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+          <input name="password" id="pw" type="password" autocomplete="current-password" required placeholder="••••••••">
+          <button type="button" class="lgeye" id="pwShow" aria-label="Show the password" aria-pressed="false" title="Show the password">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></span></label>
+      <div class="lgcaps" id="caps" role="status" hidden>⇪ Caps Lock is on</div>
+      <input type="hidden" name="next" value="{{ next }}">
+      <button class="primary wide lgbtn" type="submit" id="lgGo"><span class="lbl">Sign in</span><span class="spin" aria-hidden="true"></span></button>
+      <p class="tiny muted lghelp">Forgot your password? Ask your admin to set a new one.</p>
+    </form>
+
+    <footer class="lgcredit">
+      <div>Application created by <b>Kathir</b><span class="lgrole">Founder &amp; CEO, Dezquare Tech</span></div>
+      <div class="lglinks">
+        <a href="mailto:info@dezquare.co.in">✉ info@dezquare.co.in</a>
+        <a href="https://www.dezquare.co.in" target="_blank" rel="noopener">🌐 www.dezquare.co.in</a>
+      </div>
+      <div class="tiny muted">© {{ year }} Dezquare Tech · PDF Accessibility Studio v{{ version }}</div>
+    </footer>
+  </section>
+</main>
+
+<script>
+// the stories turn by themselves; a click, a hover or the keys hold them
+(function () {
+  const sc = document.getElementById('sc');
+  if (!sc) return;
+  const slides = [...sc.querySelectorAll('.scs')];
+  const dots = [...sc.querySelectorAll('.scnav button')];
+  const calm = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let i = 0, timer = null, held = false;
+  const show = (k) => {
+    i = (k + slides.length) % slides.length;
+    slides.forEach((s, j) => { s.classList.toggle('on', j === i); s.setAttribute('aria-hidden', String(j !== i)); });
+    dots.forEach((d, j) => { d.classList.toggle('on', j === i); d.setAttribute('aria-selected', String(j === i)); });
+  };
+  const run = () => { clearInterval(timer); if (!calm) timer = setInterval(() => { if (!held && !document.hidden) show(i + 1); }, 5200); };
+  dots.forEach((d, j) => d.addEventListener('click', () => { show(j); run(); }));
+  sc.addEventListener('mouseenter', () => { held = true; sc.classList.add('held'); });
+  sc.addEventListener('mouseleave', () => { held = false; sc.classList.remove('held'); });
+  sc.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') { show(i + 1); run(); }
+    if (e.key === 'ArrowLeft') { show(i - 1); run(); }
+  });
+  show(0);
+  run();
+})();
+</script>
+<script>
+(function () {
+  const pw = document.getElementById('pw');
+  const eye = document.getElementById('pwShow');
+  eye.addEventListener('click', () => {
+    const show = pw.type === 'password';
+    pw.type = show ? 'text' : 'password';
+    eye.setAttribute('aria-pressed', String(show));
+    eye.setAttribute('aria-label', show ? 'Hide the password' : 'Show the password');
+    eye.title = show ? 'Hide the password' : 'Show the password';
+    eye.classList.toggle('on', show);
+    pw.focus();
+  });
+  const caps = document.getElementById('caps');
+  const capsCheck = (e) => { if (e.getModifierState) caps.hidden = !e.getModifierState('CapsLock'); };
+  pw.addEventListener('keydown', capsCheck);
+  pw.addEventListener('keyup', capsCheck);
+  pw.addEventListener('blur', () => { caps.hidden = true; });
+  // the user name is remembered on this computer (never the password)
+  const un = document.getElementById('un');
+  try { const last = localStorage.getItem('ua-last-user'); if (last && !un.value) { un.value = last; pw.focus(); } } catch (e) { /* none */ }
+  document.getElementById('lgForm').addEventListener('submit', () => {
+    try { localStorage.setItem('ua-last-user', un.value.trim()); } catch (e) { /* none */ }
+    // this tab is signed in (V4.21.4: a sign-in ends when every tab of the app is closed)
+    try { sessionStorage.setItem('ua-tab', Math.random().toString(36).slice(2) + Date.now().toString(36)); } catch (e) { /* none */ }
+    const b = document.getElementById('lgGo');
+    b.classList.add('busy');
+    b.querySelector('.lbl').textContent = 'Signing in…';
+    setTimeout(() => { b.disabled = true; }, 0);
+  });
+})();
+</script>
+</body>
+</html>

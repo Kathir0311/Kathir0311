@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Dezquare PDF Accessibility Studio{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_v }}">
+{% if me %}<script src="{{ url_for('static', filename='tabguard.js') }}?v={{ asset_v }}"></script>{% endif %}
+</head>
+<body class="{% block bodyclass %}{% endblock %}{% if me %} role-{{ my_role }}{% if not can_upload %} noanalyse{% endif %}{% endif %}">
+<header class="topbar">
+  <a class="brand" href="{{ url_for('index') }}"><span class="mark">UA</span><span class="brandname"> Dezquare PDF Accessibility Studio</span></a>
+  {% block nav %}
+  {% if me %}
+  <nav class="mainnav" aria-label="Pages">
+    <a href="{{ url_for('index') }}" class="{{ 'on' if request.endpoint == 'index' else '' }}">{{ 'Files' if is_admin else 'My files' }}</a>
+    {% if is_admin %}<a href="{{ url_for('admin_page') }}" class="{{ 'on' if request.endpoint == 'admin_page' else '' }}">Admin</a>{% endif %}
+    <a href="{{ url_for('index') }}?view=queue" id="wfQueueLink" class="wfqlink" title="What waits for you"><span class="wfqi" aria-hidden="true">📥</span><span class="wfqtext">{{ 'My queue' if not is_admin else 'My work' }}</span> <span class="count hidden" id="wfQueueN">0</span></a>
+  </nav>
+  {% endif %}
+  {% endblock %}
+  {% block headerextra %}<div class="spacer"></div>{% endblock %}
+  {% if is_admin %}<button id="settingsBtn" type="button" title="Settings">Settings</button>{% endif %}
+  {% if me %}
+  <div class="usermenu">
+    <button type="button" class="userbtn" id="userBtn" aria-haspopup="true" aria-expanded="false" title="{{ me.name }} ({{ my_role_label }})">
+      <span class="avatar" aria-hidden="true">{{ (me.name or me.username)[:1]|upper }}</span><span class="uname">{{ me.username }}</span>
+      <span class="rolechip r-{{ my_role }}">{{ my_role_label }}</span></button>
+    <div class="userpop hidden" id="userPop" role="menu">
+      <div class="small"><b>{{ me.name or me.username }}</b><div class="tiny muted">{{ my_role_label }} · last sign-in {{ (me.last_login or '')|replace('T', ' ') }}</div></div>
+      <button type="button" class="sm" id="pwBtn" role="menuitem">Change my password</button>
+      <a class="btn sm" href="{{ url_for('logout') }}" role="menuitem">Sign out</a>
+      <div class="ucredit tiny">PDF Accessibility Studio v{{ app_version }}<br>Created by <b>Kathir</b> · Founder &amp; CEO, Dezquare Tech<br>
+        <a href="mailto:info@dezquare.co.in">info@dezquare.co.in</a> · <a href="https://www.dezquare.co.in" target="_blank" rel="noopener">www.dezquare.co.in</a></div>
+    </div>
+  </div>
+  {% endif %}
+</header>
+
+{% if me %}
+<dialog id="pwDlg">
+  <div class="dlg">
+    <h3>Change my password</h3>
+    <label>Current password<input type="password" id="pwOld" autocomplete="current-password"></label>
+    <label>New password<input type="password" id="pwNew" autocomplete="new-password" minlength="6"></label>
+    <label>New password again<input type="password" id="pwNew2" autocomplete="new-password"></label>
+    <p class="small" id="pwOut"></p>
+  </div>
+  <menu><button class="primary" id="pwGo" type="button">Change</button><button type="button" onclick="this.closest('dialog').close()">Close</button></menu>
+</dialog>
+{% endif %}
+
+{% if me %}
+<dialog id="profPick">
+  <div class="dlg">
+    <h3>Profile of this file</h3>
+    <p class="small muted" id="ppFile"></p>
+    <div class="plist" id="ppList"></div>
+    <label class="row small"><input type="checkbox" id="ppRean" checked> Analyse the file again with the new profile (recommended)</label>
+    <p class="tiny muted">Analysed again: the tags are made again the way the new profile (client) wants them — hand edits are replaced, a copy of the current tags is kept. Not analysed again: the tags stay and the new profile's options apply from the next build.</p>
+    <p class="tiny muted" id="ppHist"></p>
+  </div>
+  <menu><button class="primary" id="ppGo" type="button" disabled>Change</button><button type="button" onclick="this.closest('dialog').close()">Cancel</button></menu>
+</dialog>
+{% endif %}
+
+{% if is_admin %}
+<dialog id="settingsDlg">
+  <div class="dlg">
+    <h3>Settings</h3>
+    <h2 style="margin-top:12px">Local AI (Ollama)</h2>
+    <p class="muted small">Drafts alternative text and second-guesses tag roles. Everything stays on your server; the tool works without it.</p>
+    <label>Server URL<input id="cfgUrl" value="{{ cfg.ai.base_url }}"></label>
+    <div class="twocol">
+      <label>Text model<input id="cfgText" value="{{ cfg.ai.text_model }}" list="ollamaText" placeholder="auto (best installed)"></label>
+      <label>Vision model<input id="cfgVision" value="{{ cfg.ai.vision_model }}" list="ollamaVision" placeholder="auto (best installed)"></label>
+      <datalist id="ollamaText"></datalist><datalist id="ollamaVision"></datalist>
+    </div>
+    <div class="twocol">
+      <label>Timeout (s)<input id="cfgTimeout" type="number" value="{{ cfg.ai.timeout }}"></label>
+      <label class="row" style="margin-top:22px"><input type="checkbox" id="cfgEnabled" {% if cfg.ai.enabled %}checked{% endif %}> Enable AI features</label>
+    </div>
+    <div class="twocol">
+      <label title="Ollama keeps the model in memory for this long after an answer (30m, 2h, 0 = unload at once). Loading a vision model from disk is most of the time a drawn zone used to take.">Keep the model loaded<input id="cfgKeep" value="{{ cfg.ai.keep_alive }}" placeholder="30m"></label>
+      <label title="The longest side of the picture sent to the vision model. A vision model turns every tile of the picture into tokens, so a big crop costs minutes on a CPU and says nothing more. 1100 is a good default; raise it only for very fine print.">Picture size (px)<input id="cfgImgPx" type="number" min="300" max="4000" value="{{ cfg.ai.max_image_px }}"></label>
+    </div>
+    <div class="btnrow"><button type="button" id="pingBtn">Test connection</button>
+      <button type="button" id="cfgRecommended" title="AI on, 600 s for the model to answer, the model kept in memory 30 minutes, pictures at 1100 px, 5 files at the same time on 10 CPU cores each — then Save">Use the recommended settings</button></div>
+    <p id="pingOut" class="pingout"></p>
+    <p class="tiny muted">Leave a model blank to use the best installed one. A model that is not installed is replaced automatically by an installed one of the same kind.</p>
+    <details id="taskModels" style="margin-top:8px">
+      <summary class="small">Model per job <span class="muted">(alt text, formulas, table checks, link text…)</span></summary>
+      <p class="tiny muted">Each job can use its own model: a small fast one for the short text questions, the best vision model for the pictures. “General” uses the text/vision model above.</p>
+      <div id="taskRows" class="taskrows"></div>
+    </details>
+    <h2 style="margin-top:12px">Speed</h2>
+    <p class="muted small">Big books are split across CPU cores; several files can run side by side. 0 = automatic. <span id="cpuInfo"></span></p>
+    <div class="twocol">
+      <label>Files at the same time<input id="cfgFiles" type="number" min="0" max="16" value="{{ (cfg.parallel or {}).files or 0 }}"></label>
+      <label>CPU cores per file<input id="cfgProcs" type="number" min="0" max="64" value="{{ (cfg.parallel or {}).page_procs or 0 }}"></label>
+    </div>
+    <p class="tiny muted">Files × cores should not be much more than the CPU cores of this server. More files at once also needs more memory (about 300–600 MB per big file). Changes apply to the next file that starts.</p>
+    <h2 style="margin-top:12px">veraPDF</h2>
+    <p class="muted small">Path to the veraPDF command-line launcher (verapdf or verapdf.bat). When set, every build is validated against the PDF/UA-1 profile.</p>
+    <label>veraPDF path<input id="cfgVera" value="{{ cfg.verapdf }}" placeholder="/opt/verapdf/verapdf"></label>
+    <p class="small muted" id="envLine"></p>
+  </div>
+  <menu>
+    <button type="button" class="primary" id="saveCfg">Save</button>
+    <button type="button" onclick="this.closest('dialog').close()">Close</button>
+  </menu>
+</dialog>
+{% endif %}
+
+<main>{% block body %}{% endblock %}</main>
+<script src="{{ url_for('static', filename='common.js') }}?v={{ asset_v }}"></script>
+{% if me %}<script src="{{ url_for('static', filename='workflow.js') }}?v={{ asset_v }}"></script>{% endif %}
+{% block scripts %}{% endblock %}
+</body>
+</html>

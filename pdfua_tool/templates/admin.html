@@ -1,0 +1,415 @@
+{% extends "base.html" %}
+{% block title %}Admin — Dezquare PDF Accessibility Studio{% endblock %}
+{% block bodyclass %}adminpage{% endblock %}
+{% block body %}
+<div class="wrap wide">
+  <div class="adminhead">
+    <div><h1>Admin</h1><p class="muted small">Users, who works on which file, folders uploaded in bulk, and everything that happened.</p></div>
+    <div class="spacer"></div>
+    <a class="btn sm" href="/api/admin/export.csv" title="Every file with its user, status and dates (.csv for Excel)">Export files (.csv)</a>
+  </div>
+  <div class="atabs" role="tablist">
+    <button class="on" data-tab="overview" role="tab">Overview</button>
+    <button data-tab="files" role="tab">Files <span class="count" id="poolCount"></span></button>
+    <button data-tab="workflow" role="tab">Workflow <span class="count" id="wfCount"></span></button>
+    <button data-tab="users" role="tab">Users</button>
+    <button data-tab="samples" role="tab">Sample files <span class="count" id="sampCount"></span></button>
+    <button data-tab="brain" role="tab">🧠 AI Brain <span class="count" id="brainCount"></span></button>
+    <button data-tab="bulk" role="tab">Bulk upload (folder)</button>
+    <button data-tab="activity" role="tab">Activity</button>
+    <button data-tab="system" role="tab">System</button>
+    <button data-tab="templates" role="tab" class="hidden">Templates</button>
+  </div>
+
+  <!-- overview -->
+  <section class="apane" id="pane-overview">
+    <div class="ovhead">
+      <div><h2 class="ovhello" id="ovHello">Overview</h2><p class="tiny muted" id="ovSub">Loading…</p></div>
+      <div class="spacer"></div>
+      <label class="row small ovauto"><input type="checkbox" id="ovAuto" checked> refresh every 20 s</label>
+      <button class="sm" id="ovRefresh" title="Load again">↻ Refresh</button>
+    </div>
+    <div class="tiles ovtiles" id="aTiles">{% for i in range(8) %}<div class="tile skeleton"></div>{% endfor %}</div>
+    <div class="dashrow ovrow">
+      <div class="card dcard"><div class="dhead"><h3>Last 14 days</h3><div class="spacer"></div>
+          <span class="tiny muted"><i class="legend-dot up"></i> uploaded <i class="legend-dot bu"></i> built <i class="legend-dot ap"></i> approved</span></div>
+        <div class="spark ovspark" id="aTrend"></div></div>
+      <div class="card dcard"><div class="dhead"><h3>Work status</h3></div><div id="aWork" class="hbars"></div>
+        <div id="aRing"></div></div>
+      <div class="card dcard"><div class="dhead"><h3>Due soon</h3><div class="spacer"></div><span class="chip err hidden" id="aOverdue"></span></div>
+        <ol class="duelist" id="aDue"></ol></div>
+    </div>
+    <div class="dashrow two ovrow">
+      <div class="card dcard"><div class="dhead"><h3>Who has what</h3><div class="spacer"></div><span class="tiny muted">open = not approved yet</span></div>
+        <div id="aUsers" class="ucards"></div></div>
+      <div class="card dcard"><div class="dhead"><h3>Profiles / clients</h3><div class="spacer"></div>
+          <button class="sm" data-goto="samples">Sample files →</button></div>
+        <table class="list ptable" id="aProfiles"><thead><tr><th>Profile</th><th>Files</th><th>Pages</th><th>Open</th><th>Approved</th><th title="checker errors still left">Errors</th><th title="sample files the tool learned from">Samples</th></tr></thead><tbody></tbody></table></div>
+    </div>
+    <div class="dashrow two ovrow">
+      <div class="card dcard"><div class="dhead"><h3>Latest activity</h3><div class="spacer"></div><button class="sm" data-goto="activity">All →</button></div>
+        <ol class="timeline small" id="aRecent"></ol></div>
+      <div class="card dcard"><div class="dhead"><h3>Working now</h3></div><div id="aQueue" class="small muted"></div>
+        <div class="dhead" style="margin-top:14px"><h3>Quality</h3></div><div id="aQuality" class="small"></div></div>
+    </div>
+  </section>
+
+  <!-- files -->
+  <section class="apane hidden" id="pane-files">
+    <div class="card">
+      <div class="fhead">
+        <input type="search" id="fSearch" placeholder="Search file, folder, title…">
+        <select id="fUser" title="Given to"><option value="">Every user</option><option value="-">Not given (pool)</option>
+          {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}</select>
+        <select id="fWork" title="Work"><option value="">Any work status</option>
+          {% for k, v in states.items() %}{% if k %}<option value="{{ k }}">{{ v }}</option>{% endif %}{% endfor %}</select>
+        <select id="fStage" title="Tool status"><option value="">Any tool status</option><option value="active">working now</option>
+          <option value="review">to review</option><option value="done">built</option><option value="error">failed</option><option value="question">tags found — answer</option></select>
+        <select id="fFolder" title="Folder / batch"><option value="">Every folder</option></select>
+        <select id="fProfile" title="Profile"><option value="">Every profile</option>{% for name in profiles %}<option>{{ name }}</option>{% endfor %}</select>
+        <select id="fPrio" title="Priority"><option value="">Any priority</option><option>urgent</option><option>high</option><option>normal</option><option>low</option></select>
+        <select id="fSort" title="Sort"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="name">Name</option>
+          <option value="pages">Most pages</option><option value="due">Due first</option><option value="prio">Priority</option><option value="user">User</option></select>
+        <div class="spacer"></div>
+        <span class="small muted" id="fCount"></span>
+      </div>
+      <div class="bulkbar" id="bulkBar">
+        <span class="selcount" id="selCount">0 selected</span>
+        <div class="bgroup">
+          <select id="bTo" class="sm" title="Production user">{% for u in users if u.active and u.role in ('admin', 'production', 'user') %}<option value="{{ u.username }}">{{ u.username }}{{ ' (admin)' if u.role == 'admin' else '' }}</option>{% endfor %}</select>
+          <button class="sm primary" id="bGive" title="Give the files to this user (a file given before moves to them)">Allocate</button>
+          <button class="sm" id="bSpread" title="Share the files out among several users">Share out…</button>
+        </div>
+        <div class="bgroup">
+          <button class="sm" id="bUnassign" title="Take the files back into the pool">Unassign</button>
+          <button class="sm" id="bRevert" title="Put the last allocation change back">Revert</button>
+        </div>
+        <div class="bgroup">
+          <select id="bStep" class="sm" title="Put the files at a workflow step (the admin overrides the checks)"><option value="">Move to step…</option>
+            {% for k, v in states.items() %}{% if k not in ('returned', 'submitted') %}<option value="{{ k or '-' }}">{{ v }}</option>{% endif %}{% endfor %}</select>
+          <button class="sm" id="bApprove" title="Ready for delivery — the admin skips QA and Final QA">Approve</button>
+          <button class="sm" id="bReturn" title="Send the files to rework (production) with a note">Rework…</button>
+        </div>
+        <div class="bgroup">
+          <select id="bPrio" class="sm" title="Priority"><option value="">Priority…</option><option>urgent</option><option>high</option><option>normal</option><option>low</option></select>
+          <input type="date" id="bDue" class="sm" title="Due date">
+          <button class="sm" id="bNote" title="A note on every selected file">Note…</button>
+        </div>
+        <div class="bgroup">
+          <select id="bProfile" class="sm" title="Give the files another profile">{% for name in profiles %}<option>{{ name }}</option>{% endfor %}</select>
+          <button class="sm" id="bProfileGo" title="Change the profile (the files are analysed again with it)">Change profile…</button>
+          <button class="sm" id="bLearn" title="The tags of these files (as they are now) teach the tool — Sample files">Add to samples</button>
+        </div>
+        <div class="bgroup">
+          <button class="sm" id="bBuild" title="Build the accessible PDFs">Build</button>
+          <button class="sm" id="bRean" title="Analyse again from scratch (replaces the tags)">Re-analyse</button>
+          <button class="sm" id="bZip" title="Download the built PDFs (and reports) as one zip">Download</button>
+          <button class="sm danger" id="bDelete">Delete</button>
+        </div>
+      </div>
+      <div class="tablewrap">
+      <table class="list ftable" id="fTable">
+        <thead><tr><th class="ck"><input type="checkbox" id="ckAll" title="Select every file shown"></th><th>File</th><th>Given to</th><th>Work</th>
+          <th>Profile</th><th>Priority</th><th>Due</th><th>Pages</th><th>Tool</th><th>Errors</th><th>Uploaded by</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      </div>
+      <p class="muted small hidden" id="fEmpty">No file matches.</p>
+    </div>
+  </section>
+
+  <!-- workflow (V4.23) -->
+  <section class="apane hidden" id="pane-workflow">
+    <div class="ovhead">
+      <div><h2>Production workflow</h2><p class="tiny muted">Production → QA → Final QA → Delivery. Every file's step, who has it, its rework rounds and comments.</p></div>
+      <div class="spacer"></div>
+      <button class="sm" id="wfRefresh">↻ Refresh</button>
+    </div>
+    <div class="tiles ovtiles" id="wfTiles">{% for i in range(6) %}<div class="tile skeleton"></div>{% endfor %}</div>
+    <div class="kanban" id="wfBoard"></div>
+    <div class="dashrow ovrow">
+      <div class="card dcard"><div class="dhead"><h3>Production</h3><div class="spacer"></div><span class="tiny muted">files · rework · comments</span></div>
+        <table class="list ptable" id="wfPeople"><thead><tr><th>User</th><th>Files</th><th title="files sent back at least once">Rework files</th><th title="rework rounds in all">Rounds</th><th>Comments</th><th>Done</th><th title="done without a rework">First pass</th></tr></thead><tbody></tbody></table></div>
+      <div class="card dcard"><div class="dhead"><h3>Checkers</h3></div>
+        <table class="list ptable" id="wfCheckers"><thead><tr><th>User</th><th>Role</th><th>Approved</th><th>Sent to rework</th></tr></thead><tbody></tbody></table></div>
+      <div class="card dcard"><div class="dhead"><h3>What QA finds</h3><div class="spacer"></div><span class="tiny muted">comments by category</span></div>
+        <div id="wfCats" class="hbars"></div></div>
+    </div>
+    <div class="card">
+      <div class="dhead"><h3>Rules</h3><div class="spacer"></div><span class="tiny muted">saved at once</span></div>
+      <div class="wfrules" id="wfRules"></div>
+    </div>
+  </section>
+
+  <!-- users -->
+  <section class="apane hidden" id="pane-users">
+    <div class="dashrow two">
+      <div class="card"><h3>Users</h3>
+        <table class="list" id="uTable"><thead><tr><th>User</th><th>Role</th><th>Files</th><th>Last sign-in</th><th>Active</th><th></th></tr></thead><tbody></tbody></table></div>
+      <div class="card"><h3>New user</h3>
+        <form id="uForm" autocomplete="off">
+          <label>User name<input name="username" required maxlength="40" pattern="[A-Za-z0-9._\-]+" title="letters, digits, . _ -"></label>
+          <label>Full name<input name="name" maxlength="80"></label>
+          <label>E-mail (optional)<input name="email" type="email" maxlength="120"></label>
+          <label>Password<input name="password" type="password" minlength="6" required autocomplete="new-password"></label>
+          <label>Role<select name="role">
+            <option value="production" selected>Production — uploads, analyses and tags files, sends them to QA with the PAC report</option>
+            <option value="qa">QA — no upload: corrects and checks files, comments, sends to rework or approves to Final QA</option>
+            <option value="final_qa">Final QA — the last check: approves to Delivery or sends to rework</option>
+            <option value="admin">Admin — sees and manages everything</option></select></label>
+          <label>Note (optional)<input name="note" maxlength="300" placeholder="team, shift, language…"></label>
+          <div class="btnrow"><button class="primary" type="submit">Create user</button></div>
+          <p class="small" id="uOut"></p>
+        </form></div>
+    </div>
+  </section>
+
+  <!-- sample files (V4.20) -->
+  <section class="apane hidden" id="pane-samples">
+    <div class="dashrow two">
+      <div class="card">
+        <h3>Add sample files</h3>
+        <p class="small muted">A sample is a <b>finished, correctly tagged PDF</b> the way the client wants it (their own
+          tagged file, or one you approved). The tool reads every tag — what kind of text gets which tag, the wording,
+          the running heads and feet, which tag holds which — and stores it. When it converts a file of that client it
+          uses this for every tag it is not sure of. No client chosen: the samples are <b>common</b> — used for every client.</p>
+        <form id="sForm">
+          <div class="uprow">
+            <label>Client<select id="sClient" name="client">
+              <option value="">Common — every client</option>
+              {% for name in profiles %}<option>{{ name }}</option>{% endfor %}
+              <option value="__new__">New client…</option></select></label>
+            <label id="sNewRow" class="hidden">New client name<input id="sNew" name="new_client" maxlength="80" placeholder="e.g. Oxford journals"></label>
+          </div>
+          <div id="sMakeRow" class="hidden uprow">
+            <label class="row small"><input type="checkbox" name="make_profile" checked> Make a profile for the new client, starting from</label>
+            <select name="base_profile">{% for name in profiles %}<option {% if name == default_profile %}selected{% endif %}>{{ name }}</option>{% endfor %}</select>
+          </div>
+          <label class="drop" id="sDrop">
+            <input type="file" id="sFiles" name="pdf" accept="application/pdf" multiple>
+            <strong>Choose sample PDFs</strong> <span class="muted">— or drop them here</span>
+            <div class="small muted" id="sInfo">No file chosen.</div>
+          </label>
+          <div class="btnrow"><button class="primary" id="sGo" type="submit" disabled>Upload and learn</button></div>
+        </form>
+      </div>
+      <div class="card">
+        <h3>How the samples are used</h3>
+        <ul class="small learnlist">
+          <li><b>Tags the tool doubts</b> (a heading found by size, a short bold line, a caption, a note) take the tag the most similar sample text has — when the samples agree.</li>
+          <li><b>Wording</b> the client's samples always tag one way (“Key messages” → H2, “Abstract” → H1) is tagged the same.</li>
+          <li><b>Running heads and feet</b> the samples print become artifacts.</li>
+          <li>Heading levels never jump; hand edits are never touched; every change carries a note <code>samples: …</code> in the editor.</li>
+          <li>In the editor, the properties of a tag show <b>what the samples say</b> about it — one click takes their tag.</li>
+          <li>Files approved in <b>Files</b> can be added as samples too (<b>Add to samples</b>) — the more good files, the better the next ones.</li>
+          <li>A profile uses the samples of the client with its name (or the one in its <i>Samples client</i> option) plus the common ones; switch it off with <i>Learn from sample files</i>.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card learncard">
+      <div class="dhead"><h3>Learning</h3><div class="spacer"></div>
+        <a class="btn sm" href="/admin/samples/backup.db" title="The whole sample database — a safe copy, also while the tool runs">⤓ Database backup</a>
+        <button class="sm" id="lRelearn" title="Read every sample file again (after an update of the tool)">Learn all again</button></div>
+      <div class="lswitches">
+        <label class="switch"><input type="checkbox" data-learn="enabled"><span class="knob"></span><span><b>Use the sample files</b><i>conversion takes the tags the client's samples give</i></span></label>
+        <label class="switch"><input type="checkbox" data-learn="auto_approved"><span class="knob"></span><span><b>Approved files teach the tool</b><i>an approved file becomes a sample by itself — its file, tag model, what people changed, its details</i></span></label>
+        <label class="switch"><input type="checkbox" data-learn="use_ai"><span class="knob"></span><span><b>AI with the samples</b><i>what the samples cannot settle goes to the local AI with the client's own examples</i> <span class="chip" id="lAi"></span></span></label>
+        <label class="switch"><input type="checkbox" data-learn="rules"><span class="knob"></span><span><b>Client structure</b><i>captions go where the client's samples put them</i></span></label>
+      </div>
+      <div class="dbstats" id="lDb"></div>
+    </div>
+    <div class="card">
+      <div class="dhead"><h3>What the tool learned</h3><div class="spacer"></div><div class="seg" id="kClients"></div></div>
+      <div id="kView" class="kview"><p class="small muted">No sample files yet.</p></div>
+    </div>
+    <div class="card">
+      <div class="fhead"><h3 style="margin:0">Sample files</h3><div class="spacer"></div>
+        <select id="sFilter"><option value="*">Every client</option></select><span class="small muted" id="sCount"></span></div>
+      <div class="tablewrap"><table class="list" id="sTable"><thead><tr><th>File</th><th>Client</th><th>Pages</th><th>Tags learned</th><th>Status</th><th>Used</th><th>Added</th><th></th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <!-- the self-learning brain (V4.25) -->
+  <section class="apane hidden" id="pane-brain">
+    <div class="ovhead">
+      <div><h2 class="ovhello">🧠 AI Brain</h2>
+        <p class="tiny muted" id="brSub">The tool's own self-learning AI: it learns from every sample file, every built and approved file, and decides the tags of the next file by itself.</p></div>
+      <div class="spacer"></div>
+      <span class="chip" id="brState">…</span>
+      <button class="sm" id="brStudy" title="The local AI (Ollama) reads every sample again and writes each client's tagging rules; the memory gets the embedding model's vectors">✨ AI study of every sample</button>
+      <button class="sm primary" id="brTrain" title="Train the brain's own model again on everything in the database">⚙ Train now</button>
+      <button class="sm" id="brRefresh" title="Load again">↻</button>
+    </div>
+    <div class="tiles ovtiles brtiles" id="brTiles">{% for i in range(6) %}<div class="tile skeleton"></div>{% endfor %}</div>
+    <div class="dashrow two">
+      <div class="card dcard"><div class="dhead"><h3>Learning curve</h3><div class="spacer"></div>
+          <span class="tiny muted"><i class="legend-dot ap"></i> first-pass quality of approved files <i class="legend-dot up"></i> model accuracy (held-out)</span></div>
+        <div id="brCurve" class="brcurve"></div>
+        <p class="tiny muted">First-pass quality: the share of text tags the tool got right before anybody changed them. Model accuracy: measured on sample files the model was not trained on.</p></div>
+      <div class="card dcard"><div class="dhead"><h3>Whom the brain trusts</h3></div>
+        <div id="brTrust" class="hbars"></div>
+        <p class="tiny muted">Every approved file shows which source was right. A source that is often right counts more next time — the brain's own decisions get better by themselves.</p></div>
+    </div>
+    <div class="card learncard">
+      <div class="dhead"><h3>Brain settings</h3><div class="spacer"></div><span class="tiny muted" id="brDefault"></span></div>
+      <div class="lswitches">
+        <label class="switch"><input type="checkbox" data-learn="brain"><span class="knob"></span><span><b>AI brain decides the tags</b><i>profiles with “AI brain” on (Smart AI, Best quality) let the brain decide every text tag</i></span></label>
+        <label class="switch"><input type="checkbox" data-learn="feedback"><span class="knob"></span><span><b>Every built file teaches</b><i>what people change in the tool's proposal is remembered at each build (an approved file counts more)</i></span></label>
+        <label class="switch"><input type="checkbox" data-learn="ai_study"><span class="knob"></span><span><b>AI studies each sample</b><i>the local AI writes the client's tagging rules and the document type for every new sample</i></span></label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="dhead"><h3>✍ Learned code — rules the learning engine wrote itself</h3><div class="spacer"></div>
+        <span class="tiny muted" id="cdCount"></span>
+        <button class="sm" id="cdWrite" title="Look at every fix people made again and write (or rewrite) the rules">✍ Write rules now</button></div>
+      <p class="tiny muted">From the fixes people make, the engine finds the pattern (“set in this font, this size, bold → H3”) and writes it as a small Python rule. Each rule is checked against a whitelist before it may run, tested on every finished tag in the database, and only becomes <b>active</b> when it is right ≥ 93 % of the time. A rule people keep undoing is retired by itself.</p>
+      <div class="tablewrap"><table class="list" id="cdTable"><thead><tr><th>Rule</th><th>What it does</th><th>Client</th><th>Learned from</th><th>Tested</th><th>In real files</th><th>Status</th><th></th></tr></thead><tbody></tbody></table></div>
+      <pre class="codeview hidden" id="cdCode"></pre>
+    </div>
+    <div class="dashrow two">
+      <div class="card"><div class="dhead"><h3>🧩 Memory — what people wrote once</h3></div>
+        <p class="tiny muted">A picture described once (a logo, an icon) gets the same alt text in the next file; a reading set once (“Rr” → “uppercase R, lowercase r”) is used again.</p>
+        <div id="memView" class="small muted">Nothing remembered yet.</div></div>
+      <div class="card"><div class="dhead"><h3>🔒 Privacy guard</h3><div class="spacer"></div><span class="chip" id="pvState">…</span></div>
+        <label class="switch"><input type="checkbox" id="pvGuard"><span class="knob"></span><span><b>Nothing leaves this server</b><i>connections only to this machine and the private network (Ollama); everything else is blocked and logged. The pages only talk to this server; the Reader uses voices on the computer only</i></span></label>
+        <label>Also allow these hosts (one per line — e.g. an Ollama server on another address)<textarea id="pvAllow" rows="2" placeholder="gpu-server.example.org"></textarea></label>
+        <div class="btnrow"><button class="sm" id="pvSave">Save</button><span class="tiny muted" id="pvAi"></span></div>
+        <div class="tiny muted">Blocked attempts:</div><div id="pvLog" class="tiny mono pvlog">none</div></div>
+    </div>
+    <div class="card"><div class="dhead"><h3>📖 Rule book (offline)</h3><div class="spacer"></div><span class="tiny muted">the tool looks things up here — never on the internet</span></div>
+      <input type="search" id="kbQ" placeholder="Search the rule book: heading levels, table headers, alt text…" style="width:100%">
+      <div id="kbRes" class="brins" style="margin-top:8px"></div>
+      <details style="margin-top:10px"><summary class="small">Add a house rule</summary>
+        <div class="uprow" style="margin-top:8px">
+          <label>Title<input id="kbT" maxlength="200" placeholder="Unit tabs on the page edge are artifacts"></label>
+          <label>Tags it is about<input id="kbR" maxlength="200" placeholder="Artifact H1"></label>
+          <label>Client (empty: every client)<input id="kbC" maxlength="80"></label></div>
+        <label>Rule<textarea id="kbX" rows="3" maxlength="2000"></textarea></label>
+        <div class="btnrow"><button class="sm primary" id="kbAdd">Add to the rule book</button></div></details></div>
+    <div class="dashrow two">
+      <div class="card"><div class="dhead"><h3>Style map — learned from the samples</h3></div>
+        <div class="tablewrap"><table class="list" id="brStyles"><thead><tr><th>Font</th><th>Size × body</th><th>Look</th><th>Tag</th><th>Agree</th><th>Seen</th></tr></thead><tbody></tbody></table></div></div>
+      <div class="card"><div class="dhead"><h3>The model, tag by tag</h3></div>
+        <div class="tablewrap"><table class="list" id="brRoles"><thead><tr><th>Tag</th><th>Precision</th><th>Recall</th><th>F1</th><th>Tested</th></tr></thead><tbody></tbody></table></div>
+        <div class="tiny muted" id="brDocs"></div></div>
+    </div>
+    <div class="card"><div class="dhead"><h3>What the AI learned from the samples</h3><div class="spacer"></div><span class="tiny muted" id="brInsCount"></span></div>
+      <div id="brInsights" class="brins"><p class="small muted">Nothing yet.</p></div></div>
+    <div class="card"><div class="dhead"><h3>Files the brain learned from</h3></div>
+      <div class="tablewrap"><table class="list" id="brHist"><thead><tr><th>When</th><th>File</th><th>Client</th><th>Kind</th><th>Text tags</th><th>Right first time</th><th>Brain's estimate</th></tr></thead><tbody></tbody></table></div></div>
+  </section>
+
+  <!-- bulk upload -->
+  <section class="apane hidden" id="pane-bulk">
+    <div class="card">
+      <h3>Upload a whole folder</h3>
+      <p class="muted small">Every PDF in the folder (and its sub-folders) is uploaded and analysed with the profile you pick. Afterwards give the files to users here or in Files — or straight away below.</p>
+      <label class="drop" id="fdrop">
+        <input type="file" id="folderInput" webkitdirectory directory multiple>
+        <strong>Choose a folder</strong> <span class="muted">— or drop it here</span>
+        <div class="small muted" id="folderInfo">No folder chosen.</div>
+      </label>
+      <div class="uprow">
+        <label>Profile<select id="bulkProfile">{% for name in profiles %}<option {% if name == default_profile %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+        <label>Give the files to<select id="bulkGive">
+          <option value="">nobody yet (pool)</option><option value="one">one user…</option>
+          <option value="round_robin">several users, in turn…</option><option value="balance">several users, same number of pages each…</option></select></label>
+        <label id="bulkOneRow" class="hidden">User<select id="bulkOne">{% for u in users if u.active %}<option>{{ u.username }}</option>{% endfor %}</select></label>
+        <div class="spacer"></div>
+        <button class="primary" id="bulkGo" disabled>Upload and analyse</button>
+      </div>
+      <div id="bulkUsers" class="userpick hidden">{% for u in users if u.active %}<label class="row small"><input type="checkbox" value="{{ u.username }}"> {{ u.username }}</label>{% endfor %}</div>
+      <div id="bulkProg" class="hidden"><p class="small" id="bulkMsg"></p><div class="bar big"><i id="bulkBar" style="width:0"></i></div></div>
+      <div id="folderList" class="folderlist"></div>
+    </div>
+  </section>
+
+  <!-- activity -->
+  <section class="apane hidden" id="pane-activity">
+    <div class="card">
+      <div class="fhead"><h3 style="margin:0">Activity</h3><div class="spacer"></div>
+        <select id="logUser"><option value="">Everybody</option>{% for u in users %}<option>{{ u.username }}</option>{% endfor %}</select>
+        <select id="logAction"><option value="">Every action</option><option value="uploaded">uploaded</option><option value="allocated">allocated / given</option>
+          <option value="approved">approved</option><option value="sent">sent for checking / back</option><option value="built">built</option>
+          <option value="profile">profile changed</option><option value="learned">learned from / samples</option><option value="sign">signed in</option>
+          <option value="deleted">deleted</option></select>
+        <input type="search" id="logSearch" placeholder="Search…">
+        <a class="btn sm" id="logCsv" href="/api/admin/log.csv" title="The activity as a .csv for Excel">Export (.csv)</a></div>
+      <div class="logstats" id="logStats"></div>
+      <ol class="timeline" id="logList"></ol>
+    </div>
+  </section>
+
+  <!-- system (V4.21) -->
+  <section class="apane hidden" id="pane-system">
+    <div class="tiles systiles" id="sysTiles"><div class="tile skeleton"></div><div class="tile skeleton"></div><div class="tile skeleton"></div><div class="tile skeleton"></div></div>
+    <div class="dashrow two">
+      <div class="card dcard"><div class="dhead"><h3>The tool</h3></div><table class="list mini kv" id="sysInfo"><tbody></tbody></table></div>
+      <div class="card dcard"><div class="dhead"><h3>Clean up old files</h3></div>
+        <p class="small muted">Delete the files nobody has touched for a while, to free disk space. A file that became a sample keeps its sample.</p>
+        <div class="uprow"><label>Which<select id="cuWhich"><option value="approved">approved files</option><option value="failed">failed files</option><option value="all">every file</option></select></label>
+          <label>Not touched for<select id="cuDays"><option>30</option><option>60</option><option selected>90</option><option>180</option><option>365</option></select></label>
+          <span class="small muted">days</span>
+          <button class="sm" id="cuPreview">Count them</button><button class="sm danger" id="cuGo" disabled>Delete</button></div>
+        <p class="small" id="cuOut"></p></div>
+    </div>
+  </section>
+
+  <!-- templates -->
+  <section class="apane hidden" id="pane-templates">
+    <div class="dashrow two">
+      <div class="card"><h3>Table templates</h3><p class="tiny muted">Made in Edit table → “Save as template”. Applied in Edit table, or by clicking tables on the page.</p><div id="tplTable"></div></div>
+      <div class="card"><h3>List templates</h3><p class="tiny muted">Made in Edit list → “Save as template”.</p><div id="tplList"></div></div>
+    </div>
+  </section>
+</div>
+
+<dialog id="spreadDlg">
+  <div class="dlg">
+    <h3>Share the files out</h3>
+    <p class="small muted">Pick the users. <b>In turn</b> gives the 1st file to the 1st user, the 2nd to the 2nd…; <b>same pages</b> gives each file to whoever has the fewest pages still open.</p>
+    <div class="userpick" id="spreadUsers">{% for u in users if u.active %}<label class="row small"><input type="checkbox" value="{{ u.username }}"> {{ u.username }}</label>{% endfor %}</div>
+    <label>How<select id="spreadMode"><option value="balance">same number of pages each</option><option value="round_robin">in turn</option></select></label>
+  </div>
+  <menu><button class="primary" id="spreadGo">Share out</button><button onclick="this.closest('dialog').close()">Cancel</button></menu>
+</dialog>
+
+<dialog id="sampDlg" class="drawer">
+  <div class="dlg"><div class="dhead"><h3 id="sdTitle">Sample</h3><div class="spacer"></div><button class="sm" onclick="this.closest('dialog').close()">✕</button></div>
+    <div id="sdBody"></div></div>
+</dialog>
+
+<dialog id="userDetailDlg" class="drawer">
+  <div class="dlg"><div class="dhead"><h3 id="udTitle">User</h3><div class="spacer"></div><button class="sm" onclick="this.closest('dialog').close()">✕</button></div>
+    <div id="udBody"></div></div>
+</dialog>
+
+<dialog id="profDlg">
+  <div class="dlg"><h3>Change the profile of <span id="profN"></span> file(s)</h3>
+    <p class="small muted">To <b id="profTo"></b>. Re-analysed: the tags are made again with the new profile (your hand edits are replaced; a copy of the current tags is kept). Not re-analysed: the tags stay, the new profile's options apply from the next build.</p>
+    <label class="row small"><input type="checkbox" id="profRean" checked> Analyse again with the new profile (recommended)</label></div>
+  <menu><button class="primary" id="profGo">Change</button><button onclick="this.closest('dialog').close()">Cancel</button></menu>
+</dialog>
+
+<dialog id="noteDlg">
+  <div class="dlg"><h3 id="noteTitle">Note</h3>
+    <textarea id="noteText" rows="4" placeholder="What should the user know?"></textarea></div>
+  <menu><button class="primary" id="noteGo">Save</button><button onclick="this.closest('dialog').close()">Cancel</button></menu>
+</dialog>
+
+<dialog id="userDlg">
+  <div class="dlg"><h3>User <span id="udName"></span></h3>
+    <label>Full name<input id="udFull"></label>
+    <label>E-mail<input id="udMail" type="email"></label>
+    <label>Role<select id="udRole"><option value="production">Production</option><option value="qa">QA</option><option value="final_qa">Final QA</option><option value="admin">Admin</option></select></label>
+    <label>Note<input id="udNote"></label>
+    <label>New password (leave empty to keep)<input id="udPw" type="password" autocomplete="new-password"></label>
+    <p class="small" id="udOut"></p>
+  </div>
+  <menu><button class="primary" id="udSave">Save</button><button onclick="this.closest('dialog').close()">Close</button></menu>
+</dialog>
+
+<script>window.STATES = {{ states|tojson }}; window.ME = {{ me.username|tojson }};
+  window.ALL_USERS = {{ users|selectattr('active')|map(attribute='username')|list|tojson }};</script>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='admin.js') }}?v={{ asset_v }}"></script>{% endblock %}

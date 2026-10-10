@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="wrap">
+  {% if not can_upload %}
+  <section class="card qahero" id="qaHero">
+    <div class="qahead">
+      <div><h1>Hello {{ me.name or me.username }} 👋</h1>
+        <p class="muted small">{{ my_role_label }} — you correct and check the files that reach {{ my_role_label }}: comment what production should fix, send a file to rework, or approve it{% if my_role == 'qa' %} for Final QA{% else %} for delivery{% endif %}. Download the input and output PDFs from every file.</p></div>
+      <div class="spacer"></div>
+      <button class="primary big" type="button" id="takeNext" title="Urgent first, then the due date, then who waited longest">Take the next file ▸</button>
+    </div>
+    <div class="qtiles" id="qTiles">
+      <div class="qtile" data-k="pick"><b>–</b><span>waiting in the queue</span></div>
+      <div class="qtile" data-k="check"><b>–</b><span>you are checking</span></div>
+      {% if my_role == 'final_qa' %}<div class="qtile" data-k="deliver"><b>–</b><span>ready to deliver</span></div>{% endif %}
+    </div>
+  </section>
+  {% else %}
+  <section class="card">
+    <h1>{% if is_admin %}Make a PDF accessible{% else %}Hello {{ me.name or me.username }} 👋{% endif %}</h1>
+    <p class="muted">The engine proposes a full tag tree, reading order, metadata and bookmarks. You review and correct it in an Acrobat-style editor, then export a tagged PDF/UA file with a compliance report. Upload several files for batch processing.</p>
+    <form method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data" id="upForm">
+      <label class="drop" id="drop">
+        <input type="file" name="pdf" id="fileInput" accept="application/pdf" multiple required>
+        <strong>Drop PDFs here</strong> or click to choose
+        <div class="small muted" id="fileList">One file opens the editor; several files run as a batch.</div>
+      </label>
+      <div class="uprow">
+        <label>Profile
+          <select name="profile" id="profile">
+            {% for name in profiles %}<option {% if name == default_profile %}selected{% endif %}>{{ name }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="row hidden" id="batchRow"><input type="checkbox" name="batch_auto" checked> Build without review (batch)</label>
+        <div class="spacer"></div>
+        <button class="primary" type="submit">Upload and analyse</button>
+      </div>
+      <input type="hidden" name="options_json" id="optionsJson">
+      <details class="opts">
+        <summary>Options for this upload</summary>
+        <div class="optgrid" id="optGrid">
+          {% for group, items in groups.items() %}
+            <div class="optgroup"><h2>{{ group }}</h2></div>
+            {% for o in items %}
+              {% if o.type == 'bool' %}
+                <label class="row" title="{{ o.help }}" {% if o.key in client_only and default_profile not in client_only[o.key] %}hidden{% endif %}><input type="checkbox" data-opt="{{ o.key }}" {% if o.key in client_only %}data-show-for="{{ client_only[o.key]|join(',') }}"{% endif %} {% if o.default %}checked{% endif %}> {{ o.label }}
+                  {% if o.help %}<span class="help">{{ o.help }}</span>{% endif %}</label>
+              {% elif o.choices %}
+                <label>{{ o.label }}<select data-opt="{{ o.key }}">{% for c in o.choices %}<option {% if c == o.default %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+                  {% if o.help %}<span class="help">{{ o.help }}</span>{% endif %}</label>
+              {% else %}
+                <label>{{ o.label }}<input data-opt="{{ o.key }}" data-type="{{ o.type }}" value="{{ o.default }}">
+                  {% if o.help %}<span class="help">{{ o.help }}</span>{% endif %}</label>
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+        </div>
+        {% if is_admin %}
+        <div class="btnrow">
+          <input id="profName" placeholder="New profile name" style="max-width:220px">
+          <button type="button" id="saveProfile">Save as profile</button>
+          <button type="button" id="delProfile" class="danger">Delete selected profile</button>
+        </div>
+        {% endif %}
+      </details>
+    </form>
+    <div class="envrow">
+      <span class="chip {{ 'ok' if env.tesseract else 'warn' }}">OCR: {{ ('Tesseract ' ~ env.tess_langs|join(', ')) if env.tesseract else 'Tesseract not found' }}</span>
+      <span class="chip {{ 'ok' if env.verapdf else 'warn' }}">veraPDF: {{ 'ready' if env.verapdf else 'not configured' }}</span>
+      <span class="chip {{ 'ok' if env.ai_enabled else '' }}">AI: {{ 'Ollama enabled' if env.ai_enabled else 'off' }}</span>
+      <span class="chip">v{{ env.version }}</span>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="dash" id="dash" aria-label="Dashboard">
+    <div class="tiles" id="tiles">
+      <div class="tile skeleton"></div><div class="tile skeleton"></div><div class="tile skeleton"></div>
+      <div class="tile skeleton"></div><div class="tile skeleton"></div>
+    </div>
+    <div class="dashrow">
+      <div class="card dcard"><div class="dhead"><h3>Last two weeks</h3><div class="spacer"></div>
+        <span class="legend-dot up"></span><span class="tiny muted">uploaded</span>
+        <span class="legend-dot bu"></span><span class="tiny muted">built</span></div>
+        <div class="spark" id="spark"></div></div>
+      <div class="card dcard"><div class="dhead"><h3>Status</h3></div><div id="stageBars" class="hbars"></div></div>
+      <div class="card dcard"><div class="dhead"><h3>Profiles</h3></div><div id="profBars" class="hbars"></div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="wfbar" id="wfBar" role="tablist" aria-label="Workflow step"></div>
+    <div class="fhead">
+      <h3 style="margin:0">{{ 'Files' if is_admin else ('My files' if can_upload else 'Files to check') }}</h3>
+      <span class="small muted" id="batchInfo"></span>
+      <div class="spacer"></div>
+      <input type="search" id="jobSearch" placeholder="Search file name, title or profile…">
+      <select id="jobStage" title="Status">
+        <option value="">Every status</option><option value="active">Working now</option>
+        <option value="review">To review</option><option value="done">Built</option>
+        <option value="clean">Built with 0 errors</option><option value="error">Failed</option>
+      </select>
+      <select id="jobProfile" title="Profile"><option value="">Every profile</option></select>
+      <select id="jobSort" title="Sort">
+        <option value="new">Newest first</option><option value="old">Oldest first</option>
+        <option value="name">Name A–Z</option><option value="pages">Most pages</option>
+        <option value="errors">Most errors left</option>
+      </select>
+      <a class="btn sm hidden" id="batchSummary" href="#">Batch summary (.xlsx)</a>
+    </div>
+    <table class="list" id="jobs">
+      <thead><tr><th></th><th>File</th><th>Step</th><th>Profile</th><th>Pages</th><th>Mode</th><th>Errors</th><th>Status</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="muted small" id="emptyJobs">Nothing yet.</p>
+  </section>
+</div>
+<script>window.PROFILES = {{ profiles|tojson }}; window.BUILTIN = {{ builtin|tojson }};
+  window.IS_ADMIN = {{ is_admin|tojson }}; window.WORK_STATES = {{ work_states|tojson }};
+  window.MY_ROLE = {{ my_role|tojson }}; window.CAN_UPLOAD = {{ can_upload|tojson }}; window.ME = {{ me.username|tojson }};</script>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='index.js') }}?v={{ asset_v }}"></script>{% endblock %}

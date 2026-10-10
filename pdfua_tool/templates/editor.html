@@ -1,0 +1,597 @@
+{% extends "base.html" %}
+{% block bodyclass %}editorpage{% if readonly %} readonly{% endif %}{% endblock %}
+{% block title %}{{ meta.filename }} — Tag editor{% endblock %}
+
+{% block headerextra %}
+  <span class="filename" title="{{ meta.filename }}">{{ meta.filename }}</span>
+  <span class="chip" id="modeChip">{{ meta.mode or '' }}</span>
+  <button type="button" class="profchip" id="profChip" title="The profile (client) of this file — click to change it">{{ meta.get('profile') or 'Default' }}</button>
+  {% if meta.stage not in ('queued', 'processing', 'question', 'error') %}
+  <div class="seg stageseg" role="tablist" aria-label="Editor stage">
+    <button class="on" id="stageTags" role="tab" title="Tags, reading order, tables (G then T)">Tags</button>
+    <button id="stageLinks" role="tab" title="Links: set links by hand, find links, check where every link goes (G then L)">Links <span class="count hidden" id="stageLinkCount">0</span></button>
+  </div>
+  {% endif %}
+  <div class="spacer"></div>
+  <span class="workchip hidden" id="workChip" tabindex="0"></span>
+  <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
+  <button id="redoBtn" title="Redo (Ctrl+Shift+Z)" disabled>↷ Redo</button>
+  <button id="nextIssueBtn" title="Next issue (.)">Next issue</button>
+  <button id="previewBtn" title="What a screen reader will read">Preview</button>
+  <button id="aiBtn" title="Local AI helpers">AI</button>
+  <button class="primary" id="buildBtn">Build PDF</button>
+{% endblock %}
+
+{% block body %}
+{% set busy = meta.stage in ('queued', 'processing') %}
+{% if meta.stage == 'error' %}
+<div class="progresswrap">
+  <h1>That file could not be processed</h1>
+  <p class="muted">{{ meta.filename }}</p>
+  <pre class="trace">{{ meta.error }}
+
+{{ meta.trace }}</pre>
+  <div class="btnrow" style="justify-content:center">
+    <button id="retryBtn" class="primary">Try again</button>
+    <a class="btn" href="{{ url_for('index') }}">Back</a>
+  </div>
+</div>
+{% elif meta.stage == 'question' %}
+<div class="progresswrap" id="askView">
+  <h1>This PDF already has tags</h1>
+  <p class="muted">{{ meta.filename }}</p>
+  {% set a = meta.assessment or {} %}
+  <p class="small">{{ a.elements or 0 }} tagged element(s){% if a.roles %} —
+    {% for r, c in (a.roles.items()|list)[:8] %}{{ r }}×{{ c }}{% if not loop.last %}, {% endif %}{% endfor %}
+    {% endif %}.</p>
+  <p class="small muted">Somebody has worked on this file already. Load those tags and carry on editing
+    them, or ignore them and let the tool analyse the file from scratch?</p>
+  <div class="askrow">
+    <button class="primary" id="askImport">Yes — load the tags as they are</button>
+    <button id="askRetag">No — analyse the file from scratch</button>
+  </div>
+  <p class="small"><button class="sm" id="askAuto">Let the tool decide
+      {% if a.verdict %}(it would {{ 'keep them' if a.verdict == 'import' else 'tag from scratch' }}){% endif %}</button></p>
+  <p class="tiny muted">Loading the tags keeps every element, its reading order and its attributes; the
+    editor then shows exactly what is in the file. Analysing from scratch replaces all of them with the
+    tool's own proposal. You can also re-analyse later from the editor.</p>
+  <div class="btnrow" style="justify-content:center"><a class="btn sm" href="{{ url_for('index') }}">Back to files</a></div>
+</div>
+{% elif busy %}
+<div class="progresswrap" id="progressView">
+  <h1>Analysing {{ meta.filename }}</h1>
+  <p class="muted" id="progMsg">{{ meta.message or 'waiting' }}</p>
+  <div class="bar live"><i id="progBar" style="width:{{ ((meta.progress or 0) * 100)|round }}%"></i></div>
+  <ol class="progsteps" id="progSteps">
+    <li><span></span>Waiting</li><li><span></span>Checking &amp; preflight</li><li><span></span>Reading the pages</li>
+    <li><span></span>Samples, alt text, contrast</li><li><span></span>Ready</li></ol>
+  <p class="small muted">Preflight, OCR, layout analysis and structure proposal. The editor opens by itself when it is ready.</p>
+  <div class="btnrow" style="justify-content:center"><button id="stopBtn" class="sm danger" type="button">Stop</button>
+    <a class="btn sm" href="{{ url_for('index') }}">Back to files</a></div>
+</div>
+{% else %}
+<div class="editor" id="editor" data-jid="{{ meta.id }}" data-ai="{{ 1 if env.ai_enabled else 0 }}">
+
+  <aside class="panel">
+    <div class="phead tagsonly">
+      <h2>Tags</h2>
+      <div class="spacer"></div>
+      <button class="sm" id="expandAll" title="Expand all">+</button>
+      <button class="sm" id="collapseAll" title="Collapse all">−</button>
+    </div>
+    <div class="docmeta tagsonly">
+      <label>Document title<input id="docTitle" value="{{ meta.title or '' }}"></label>
+      <label class="lang">Language<input id="docLang" value="{{ meta.lang or 'en-US' }}" list="langs"></label>
+    </div>
+    <div class="phead tagsonly">
+      <input type="search" id="search" placeholder="Search tag text…">
+      <select id="filter" title="Show">
+        <option value="all">All</option>
+        <option value="page">This page</option>
+        <option value="issues">With issues</option>
+        <option value="headings">Headings</option>
+        <option value="figures">Figures</option>
+        <option value="tables">Tables</option>
+        <option value="lists">Lists</option>
+        <option value="links">Links &amp; fields</option>
+        <option value="low">Low confidence</option>
+        <option value="artifacts">Artifacts</option>
+      </select>
+      <label class="row small" title="Show artifacts"><input type="checkbox" id="showArtifacts" checked> artifacts</label>
+    </div>
+    <div class="phead tagsonly">
+      <select id="roleFilter" title="Show only one tag type">
+        <option value="">Tag type: any</option>
+      </select>
+      <button class="sm" id="selAllShown" title="Select every tag the filter shows (then set them all at once in Properties)">Select all shown</button>
+    </div>
+    <div id="tree" class="tree tagsonly" tabindex="0" role="tree" aria-label="Tag tree"></div>
+    <div class="legend tagsonly">
+      <kbd>↑</kbd><kbd>↓</kbd> select · <kbd>Alt</kbd>+arrows move/nest (all selected) · <kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd><kbd>↓</kbd> heading level · <kbd>Del</kbd> remove ·
+      <kbd>1</kbd>–<kbd>6</kbd> H1–H6 · <kbd>P</kbd> para · <kbd>F</kbd> figure · <kbd>A</kbd> artifact ·
+      <kbd>D</kbd> draw, then <kbd>T</kbd> table · <kbd>1</kbd>–<kbd>6</kbd> · <kbd>F</kbd> · <kbd>I</kbd> auto · <kbd>O</kbd> order · <kbd>Ctrl</kbd>/<kbd>Alt</kbd>+<kbd>4</kbd> mark a table / list #4, click the next ones, <kbd>Esc</kbd> release · <kbd>[</kbd><kbd>]</kbd> page · <kbd>Ctrl</kbd>+<kbd>+</kbd>/<kbd>−</kbd>/wheel zoom, <kbd>Ctrl</kbd>+<kbd>0</kbd> fit · drag rows, <kbd>Shift</kbd>+drop to nest
+    </div>
+    <div class="lside linksonly" id="linksSide">
+      <div class="phead"><h2>Links</h2><div class="spacer"></div>
+        <button class="sm" id="lkPrev" title="Previous link with a problem (Shift+.)">‹ problem</button>
+        <button class="sm" id="lkNext" title="Next link with a problem (.)">problem ›</button></div>
+      <div class="lstats" id="lkStats"></div>
+      <div class="phead">
+        <input type="search" id="lkSearch" placeholder="Search link words or targets…">
+        <select id="lkFilter" title="Show">
+          <option value="all">All links</option>
+          <option value="problems">With problems</option>
+          <option value="error">Errors</option>
+          <option value="warning">Warnings</option>
+          <option value="page">This page</option>
+          <option value="internal">To this document</option>
+          <option value="web">Web &amp; e-mail</option>
+          <option value="manual">Set by hand</option>
+          <option value="file">From the file</option>
+          <option value="found">Found by the search</option>
+          <option value="dead">Dead (no link behind)</option>
+        </select>
+      </div>
+      <div class="llist" id="lkList" role="listbox" aria-label="Links"></div>
+      <div class="legend"><kbd>N</kbd> new link · <kbd>.</kbd> next problem · <kbd>Del</kbd> take the link out ·
+        <kbd>G</kbd> go to where it lands · <kbd>[</kbd><kbd>]</kbd> page · <kbd>Esc</kbd> cancel</div>
+    </div>
+  </aside>
+
+  <section class="panel">
+    <div class="phead pager">
+      <button class="sm" id="prevPage" title="Previous page ([)">‹</button>
+      <span class="small">Page <input id="pageNo" type="number" min="1" value="1"> / <span id="pageTotal">?</span></span>
+      <button class="sm" id="nextPage" title="Next page (])">›</button>
+      <span class="tagsonly row-inline">
+      <div class="seg" style="margin-left:8px">
+        <button class="sm on" id="toolSelect" title="Select (Esc)">Select</button>
+        <button class="sm" id="toolDraw" title="Draw a new tag (D)">Draw tag</button>
+        <button class="sm" id="toolOrder" title="Click boxes in reading order (O)">Reading order</button>
+      </div>
+      <button class="sm" id="retagBtn" title="This page, pages from … to …, or the whole file: auto-tag, re-analyse or remove the tags">Auto-tag page…</button>
+      <button class="sm" id="untagBtn" title="Remove the tags of this page, of pages from … to …, or of the whole PDF">Remove tags…</button>
+      <button class="sm" id="reanBtn" title="Analyse the whole file again, like at upload">Re-analyse file…</button>
+      <button class="sm" id="splitBtn" title="Two pages printed side by side on one sheet: make the left half one page and the right half the next">Split page…</button>
+      <button class="sm" id="supportBtn" title="Download this page as PDF + what the tool detected (zip) — send it when a page is tagged wrong">Export page</button>
+      </span>
+      <span class="linksonly row-inline">
+        <button class="sm primary" id="lkNewBtn" title="Set a link by hand: drag a box over the words, then pick where it goes (N)">＋ New link</button>
+        <button class="sm" id="lkCheckBtn" title="Check every link again: where it lands against what its words say">Check links</button>
+        <button class="sm" id="lkFixAllBtn" title="Apply every fix the check offers (links are never taken out by this)">Fix all</button>
+        <label class="row small" title="Show the tag boxes faintly behind the links"><input type="checkbox" id="lkShowTags"> tags</label>
+      </span>
+      <div class="spacer"></div>
+      <label class="row small tagsonly"><input type="checkbox" id="showBoxes" checked> boxes</label>
+      <label class="row small tagsonly"><input type="checkbox" id="showOrder" checked> order</label>
+      <label class="row small tagsonly" title="Show the tag name on every box"><input type="checkbox" id="showLabels"> labels</label>
+      <label class="row small tagsonly" title="Mark text below the contrast minimum"><input type="checkbox" id="showContrast" checked> contrast</label>
+      <label class="row small" title="Show the built file instead of the working copy"><input type="checkbox" id="showOut"> result</label>
+      <select id="zoom" class="sm" title="Zoom — Ctrl + / Ctrl − / Ctrl 0 (fit page), Ctrl + mouse wheel or a touchpad pinch, or drag with the right mouse button (up: in, down: out). The middle button drags the page.">
+        <option value="fit">Fit page</option><option value="width">Fit width</option>
+        <option value="0.5">50%</option><option value="0.67">67%</option><option value="0.8">80%</option>
+        <option value="1.0">100%</option><option value="1.25">125%</option>
+        <option value="1.5" selected>150%</option><option value="2.0">200%</option><option value="2.5">250%</option>
+        <option value="3">300%</option><option value="4">400%</option>
+        <option value="5">500%</option><option value="6">600%</option><option value="7">700%</option><option value="8">800%</option>
+      </select>
+    </div>
+    <div class="modebar" id="linkBar"><span class="lstep" id="linkStep"></span>
+      <div class="spacer"></div><button class="sm" id="linkCancel">Cancel</button></div>
+    <div class="modebar" id="tblBar"><b>Table on the page</b>
+      <div class="seg" id="tblZoneSeg">
+        <button class="sm on" data-z="lines" title="Drag a line to move it · Shift+click: a new row line · Alt+click: a new column line · double-click a line: take it out">Lines</button>
+        <button class="sm" data-z="rows" title="Drag a box over printed lines: they join the table as rows, cut at its column lines">＋ Rows from a zone</button>
+        <button class="sm" data-z="row1" title="Drag a box: the whole box joins the table as one row">＋ One row</button>
+        <button class="sm" data-z="col" title="Drag a box beside the table: it joins as a column, cut at the row lines">＋ Column from a zone</button>
+        <button class="sm" data-z="remove" title="Drag a box over rows (or columns): they leave the table as paragraphs">− Take out (zone)</button>
+      </div>
+      <span class="tiny" id="tblHint">drag a line · Shift+click: new row line · Alt+click: new column line</span>
+      <div class="spacer"></div><button class="sm" id="tblReopen">Back to the grid</button><button class="sm primary" id="tblDone">Done</button></div>
+    <div class="modebar" id="lstBar"><b>List on the page</b>
+      <div class="seg" id="lstZoneSeg">
+        <button class="sm on" data-z="lines" title="Shift+click inside an item: split it · drag the line between two items · double-click it: join them">Items</button>
+        <button class="sm" data-z="add" title="Drag a box over printed lines: they join the list, a new item at each label">＋ Items from a zone</button>
+        <button class="sm" data-z="add1" title="Drag a box: it joins as one item">＋ One item</button>
+        <button class="sm" data-z="remove" title="Drag a box over items: they leave the list as paragraphs">− Take out (zone)</button>
+        <button class="sm" data-z="label" title="Drag a box over the label (number, letter, bullet) of an item — or down a column of them: it becomes the item's Lbl, the rest its LBody">Lbl Label (zone)</button>
+      </div>
+      <span class="tiny" id="lstHint">Shift+click: split an item · drag a line between items · double-click: join</span>
+      <div class="spacer"></div><button class="sm" id="lstReopen">Back to the list</button><button class="sm primary" id="lstDone">Done</button></div>
+    <div class="modebar" id="tplBar"><b id="tplTitle">Template</b>
+      <span class="tiny" id="tplHint">Click a table on the page to give it the template, or drag a box to make a new one there.</span>
+      <div class="spacer"></div><button class="sm primary" id="tplDone">Done</button></div>
+    <div class="modebar" id="drawBar">Drag a rectangle over the content to tag. Tags already inside it are replaced — or press <kbd>Del</kbd> to delete every tag inside it. <kbd>Esc</kbd> to stop.</div>
+    <div class="modebar" id="orderBar">Click the boxes in the order they should be read. <span id="orderCount">0</span> picked.
+      <div class="spacer"></div><button class="sm primary" id="orderApply">Apply order</button><button class="sm" id="orderCancel">Cancel</button></div>
+    <div class="pageview" id="pageview">
+      <div class="pagewrap" id="pagewrap">
+        <img id="pageimg" alt="">
+        <div id="overlay" class="overlay"></div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="panel">
+    <div class="tabpane linksonly lright" id="linksRight"></div>
+    <div class="tabs tagsonly">
+      <button class="on" data-tab="props">Properties</button>
+      <button data-tab="issues">Issues <span class="count hidden" id="issueCount">0</span></button>
+      <button data-tab="contrast">Contrast <span class="count hidden" id="contrastCount">0</span></button>
+      <button data-tab="links">Links <span class="count hidden" id="linkCount">0</span></button>
+      <button data-tab="checks">Checks</button>
+      <button data-tab="client" title="This file against the client's sample files">Client <span class="count hidden" id="clientCount">0</span></button>
+      <button data-tab="data" title="Everything in this PDF — objects, fonts, pictures, links, fields — and what no tag holds yet">🔎 PDF data <span class="count hidden" id="dataCount">0</span></button>
+      <button data-tab="reader" title="Hear the file the way NVDA reads it — say all, quick keys, problems a listener would hear">🔊 Reader</button>
+      <button data-tab="review" title="Workflow: the file's step (Production → QA → Final QA → Delivery), Move to QA with the PAC report, review comments, checklist, input / output PDF">💬 Review <span class="count hidden" id="reviewCount">0</span></button>
+    </div>
+    <div class="tabpane inspector tagsonly" id="tab-props"></div>
+    <div class="tabpane hidden tagsonly" id="tab-issues"></div>
+    <div class="tabpane hidden tagsonly" id="tab-contrast"></div>
+    <div class="tabpane hidden tagsonly" id="tab-links"></div>
+    <div class="tabpane hidden tagsonly" id="tab-checks"></div>
+    <div class="tabpane hidden tagsonly" id="tab-client"></div>
+    <div class="tabpane hidden tagsonly" id="tab-data"></div>
+    <div class="tabpane hidden tagsonly reader" id="tab-reader"></div>
+    <div class="tabpane hidden tagsonly review" id="tab-review"></div>
+  </aside>
+</div>
+
+<datalist id="langs">
+  {% for l in ['en-US','en-GB','en-IN','ta-IN','hi-IN','te-IN','kn-IN','ml-IN','bn-IN','mr-IN','gu-IN','pa-IN','fr-FR','de-DE','es-ES','it-IT','pt-BR','nl-NL','ar','he','el','ru','zh-CN','zh-TW','ja-JP','ko-KR','la'] %}<option value="{{ l }}">{% endfor %}
+</datalist>
+
+<dialog id="buildDlg">
+  <div class="dlg">
+    <h3>Build accessible PDF</h3>
+    <p class="muted small">The tag tree is written into the page content, metadata and bookmarks are set, and the result is checked.</p>
+    <div class="optgrid" id="buildOpts">
+      {% for key, (label, help_, group, choices) in build_meta.items() %}
+        {% set v = opts[key] %}
+        {% if v is sameas true or v is sameas false %}
+          <label class="row" title="{{ help_ }}" {% if key in client_only and not v and (meta.get('profile') or 'Default') not in client_only[key] %}hidden{% endif %}><input type="checkbox" data-opt="{{ key }}" {% if v %}checked{% endif %}> {{ label }}<span class="help">{{ help_ }}</span></label>
+        {% elif choices %}
+          <label>{{ label }}<select data-opt="{{ key }}">{% for c in choices %}<option {% if c == v %}selected{% endif %}>{{ c }}</option>{% endfor %}</select><span class="help">{{ help_ }}</span></label>
+        {% else %}
+          <label>{{ label }}<input data-opt="{{ key }}" data-type="{{ 'int' if v is integer else 'str' }}" value="{{ v }}"><span class="help">{{ help_ }}</span></label>
+        {% endif %}
+      {% endfor %}
+    </div>
+    <div id="buildIssues" class="small"></div>
+    <div id="buildProgress" class="hidden"><p class="small" id="buildMsg"></p><div class="bar"><i id="buildBar" style="width:0"></i></div>
+      <button class="sm" id="buildStop" type="button">Stop build</button></div>
+    <div id="buildResult"></div>
+  </div>
+  <menu>
+    <button class="primary" id="buildGo">Build</button>
+    <button onclick="this.closest('dialog').close()">Close</button>
+  </menu>
+</dialog>
+
+<dialog id="tblDlg" class="xwide tbldlg">
+  <div class="dlg">
+    <div class="lhead"><h3>Edit table</h3><span class="chip" id="tbInfo"></span><span class="tiny muted" id="tbNote"></span><div class="spacer"></div>
+      <button class="sm" id="tbAdjust" title="Move the lines, add or take out rows on the page itself">Edit on the page ▸</button>
+      <button class="sm" id="tbClose2" title="Close (Esc)">✕</button></div>
+    <div class="tbsplit">
+      <div class="tbimgpane">
+        <div class="tbimghead"><div class="seg" id="tbParts"></div><div class="spacer"></div>
+          <button class="sm" id="tbZoomOut" title="Smaller">−</button><button class="sm" id="tbZoomIn" title="Bigger">＋</button>
+          <label class="row tiny"><input type="checkbox" id="tbShowCells" checked> cells</label>
+          <label class="row tiny" title="The order a screen reader reads the cells in (row by row) and the tags inside a cell"><input type="checkbox" id="tbShowOrder"> reading order</label></div>
+        <div class="tbimgwrap" id="tbImgWrap"><div class="tbimgbox" id="tbImgBox"><img id="tbImg" alt="The table as it is printed"><div class="tbimgov" id="tbImgOv"></div></div></div>
+        <p class="tiny muted">The table as printed, with its cells. Click a cell to pick it · drag a line to move it · <kbd>Shift</kbd>+click: a new row line · <kbd>Alt</kbd>+click: a new column line · double-click a line: take it out.</p>
+      </div>
+      <div class="tbgridpane">
+        <div class="tbtools">
+          <div class="tbgroup"><span class="tblabel">Rows</span>
+            <button class="sm" id="tbRowAbove" title="An empty row above the selected cell">＋ above</button>
+            <button class="sm" id="tbRowBelow" title="An empty row below the selected cell">＋ below</button>
+            <button class="sm" id="tbRowMerge" title="The row and the one under it become one row (the words of each cell joined)">Merge with next</button>
+            <button class="sm" id="tbRowUp" title="Move the row up">↑</button><button class="sm" id="tbRowDown" title="Move the row down">↓</button>
+            <button class="sm" id="tbRowDel" title="Delete an empty row">Delete</button>
+            <button class="sm" id="tbRowArt" title="The row leaves the table and is not read — e.g. a “continued” line">Make artifact</button></div>
+          <div class="tbgroup"><span class="tblabel">Columns</span>
+            <button class="sm" id="tbColLeft">＋ left</button>
+            <button class="sm" id="tbColRight">＋ right</button>
+            <button class="sm" id="tbColMerge" title="The column and the one on its right become one">Merge with next</button>
+            <button class="sm" id="tbColL" title="Move the column left — its cells are read before the column on its left">←</button><button class="sm" id="tbColR" title="Move the column right">→</button>
+            <button class="sm" id="tbColDel" title="Delete an empty column">Delete</button></div>
+          <div class="tbgroup"><span class="tblabel">Cells</span>
+            <button class="sm" id="tbMerge" title="The selected block becomes one cell (row/column span)">Merge</button>
+            <button class="sm" id="tbSplit" title="A merged cell back into one cell per row and column">Split</button>
+            <button class="sm" id="tbTH">TH</button><button class="sm" id="tbTD">TD</button>
+            <select class="sm" id="tbScope" title="Scope of a header cell"><option>Column</option><option>Row</option><option>Both</option></select>
+            <button class="sm" id="tbReread" title="The selected cells (or all) read their words off the page again">Re-read words</button></div>
+          <div class="tbgroup"><span class="tblabel">Headers</span>
+            <label class="inline small">rows <input type="number" id="tbHr" min="0" value="1"></label>
+            <label class="inline small">columns <input type="number" id="tbHc" min="0" value="0"></label>
+            <select class="sm" id="tbHmode"><option value="auto">auto</option><option value="scope">Scope only</option><option value="ids">IDs + Headers</option></select>
+            <button class="sm primary" id="tbHeaders">Apply</button></div>
+          <div class="tbgroup tbrogroup"><span class="tblabel">Reading order</span>
+            <button class="sm robtn" id="tbReadOrder" title="Check the order a screen reader reads the cells in, step by step, and correct it by hand (R)">☰ Check &amp; adjust…</button></div>
+          <details class="tbmore" id="tbMore"><summary class="btn sm">More ▾</summary>
+            <div class="tbmorebox">
+              <div class="mgroup"><h5>Row groups</h5>
+                <button class="sm" data-group="THead" title="The selected rows are the table's head (THead) — only rows at the top">THead</button>
+                <button class="sm" data-group="TBody">TBody</button>
+                <button class="sm" data-group="TFoot" title="The selected rows are the table's foot (TFoot) — only rows at the bottom">TFoot</button></div>
+              <div class="mgroup"><h5>Table</h5>
+                <button class="sm" id="tbSplitTable" title="The selected row and the rows after it become a new table">Split the table here</button>
+                <span class="inline"><button class="sm" id="tbJoinNext" title="The next table's rows join this one (a table continued in the next column or page)">Join the next table</button>
+                  <label class="inline tiny">its first <input type="number" id="tbDrop" min="0" value="1" style="width:46px"> row(s) repeat the header</label></span>
+                <span class="inline"><button class="sm" id="tbUntable" title="Not a table: each row (or cell) becomes a paragraph">Not a table</button>
+                  <select class="sm" id="tbUntableHow"><option value="rows">a paragraph per row</option><option value="cells">a paragraph per cell</option></select></span></div>
+              <div class="mgroup"><h5>Read the table again</h5>
+                <label class="inline small">columns <input type="number" id="tbRbCols" min="1" max="60" style="width:56px"></label>
+                <select class="sm" id="tbRbMode"><option value="">rows: as the table has them</option><option value="ruled">rows at the ruled lines</option>
+                  <option value="lines">a row per printed line</option><option value="first_col">a new row where the first column starts</option></select>
+                <button class="sm" id="tbRebuild" title="Cut the table's zone again into this many columns and rows made this way">Read again</button></div>
+              <div class="mgroup"><h5>Same structure elsewhere</h5>
+                <span class="small">Select this table and press <kbd>Ctrl</kbd>+<kbd>4</kbd> (or <kbd>Alt</kbd>+<kbd>4</kbd>, any number): it is marked #4. Then click the next tables — on any page — and each is read again and tagged the same way. <kbd>Esc</kbd> lets the mark go.</span></div>
+              <div class="mgroup hidden"><h5>Template</h5>
+                <label class="inline small">#<input type="number" id="tbTplNum" min="1" style="width:56px" placeholder="new"></label>
+                <input class="sm" id="tbTplName" placeholder="name (optional)" style="width:150px">
+                <button class="sm primary" id="tbTplSave" title="Mark this table's structure with a number, to give it to other tables">Save as template</button>
+                <select class="sm" id="tbTplPick"></select>
+                <button class="sm" id="tbTplApply" title="This table gets the template's structure">Apply to this table</button>
+                <button class="sm" id="tbTplMode" title="Click other tables on the page (or draw zones) to give them the template">Apply to tables I click ▸</button></div>
+              <div class="mgroup"><h5>Tidy</h5>
+                <button class="sm" id="tbTidy" title="Every row as wide as the table (an empty cell where one is missing), empty rows and columns out, empty header cells → TD">Tidy the table</button>
+                <button class="sm" id="tbRowTH" title="The selected row becomes header cells (TH, scope Column)">Row → header</button>
+                <button class="sm" id="tbColTH" title="The selected column becomes header cells (TH, scope Row)">Column → header</button>
+                <button class="sm" id="tbRowTD">Row → data</button><button class="sm" id="tbColTD">Column → data</button></div>
+              <div class="mgroup"><h5>Reading order</h5>
+                <span class="small">Cells are read row by row, left to right — move rows (↑ ↓) and columns (← →) to change it. The tags inside a cell: pick the cell and order them in the list under the toolbar.</span>
+                <button class="sm" id="tbOrderAll" title="In every cell with more than one tag, the tags are read top to bottom, left to right as printed">Order every cell's tags by position</button></div>
+              <div class="mgroup"><h5>Empty cells</h5>
+                <span class="inline small">read as <input class="sm" id="tbEmptyText" placeholder="(the build setting)" style="width:150px"></span>
+                <button class="sm" id="tbEmptyGo" title="Every empty cell of this table is announced with these words">Apply</button>
+                <span class="tiny muted" id="tbEmptyN"></span></div>
+              <div class="mgroup"><h5>Words from a spreadsheet</h5>
+                <span class="small">Copy cells in Excel, click the first cell here and press <kbd>Ctrl</kbd>+<kbd>V</kbd>: the words go into the cells, right and down. <kbd>Ctrl</kbd>+<kbd>C</kbd> copies the selected cells.</span></div>
+              <div class="mgroup"><h5>Summary</h5>
+                <textarea id="tbSummary" rows="2" placeholder="What the table shows, for a screen reader (optional — PDF/UA: /Summary)"></textarea>
+                <span class="inline"><button class="sm" id="tbSummarySave">Save</button><button class="sm" id="tbSummaryAi" title="The local AI drafts it from the caption and the first rows">Draft with AI</button></span></div>
+              <div class="mgroup"><h5>Export</h5><button class="sm" id="tbCsv">Download as CSV</button></div>
+            </div></details>
+        </div>
+        <div class="tbro hidden" id="tbRO" aria-live="polite">
+          <div class="rohead"><b>Reading order — check &amp; adjust</b><span class="rostat" id="roStat"></span><div class="spacer"></div>
+            <div class="seg" id="roMode"><button class="sm on" type="button" data-m="check" title="Walk through the cells in the order they are read">Check</button><button class="sm" type="button" data-m="click" title="Click the cells one after another in the order they should be read">Set by clicking</button></div>
+            <button class="sm" id="roClose" title="Close the reading order (Esc)">✕</button></div>
+          <div class="robody" id="roCheck">
+            <div class="rosteps"><button class="sm" id="roFirst" title="First cell (Home)">⏮</button><button class="sm" id="roPrev" title="Read before (← ↑)">◀</button>
+              <span class="rostep" id="roStep">–</span>
+              <button class="sm" id="roNext" title="Read next (→ ↓)">▶</button><button class="sm" id="roLast" title="Last cell (End)">⏭</button>
+              <button class="sm" id="roPlay" title="Walk through every cell by itself (Space)">▶ Play</button>
+              <label class="row tiny" title="Say each cell's words aloud, as a screen reader would"><input type="checkbox" id="roSpeak"> speak</label></div>
+            <div class="rocur" id="roCur"></div>
+            <div class="rofix"><button class="sm primary" id="roPrinted" title="Read the cells as they are printed: by rows on the page, left to right">Order as printed</button>
+              <button class="sm" id="roOffNext" title="Jump to the next cell that is read out of its printed place">Next mismatch ⚠</button></div>
+          </div>
+          <div class="robody hidden" id="roClick">
+            <span class="small" id="roPicked"></span>
+            <button class="sm" id="roBack" title="Take back the last click (Backspace)">↶ last pick</button>
+            <button class="sm" id="roClear">Start again</button>
+            <button class="sm primary" id="roApply" title="The cells are read in the order clicked; cells not clicked follow in their present order (Enter)">Apply this order</button>
+          </div>
+          <div class="tiny muted" id="roHint"></div>
+        </div>
+        <div class="tbchecks" id="tbChecks"></div>
+        <div class="small muted tbsel" id="tbSel"></div>
+        <div class="tborder hidden" id="tbOrder"></div>
+        <div class="tbgridwrap" id="tbGrid"></div>
+        <p class="tiny muted">Click a cell, <kbd>Shift</kbd>+click or <kbd>Shift</kbd>+arrows for a block, <kbd>Ctrl</kbd>+click to add or drop one cell, <kbd>Ctrl</kbd>+arrows to jump to the edge (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+arrows: select to the edge), <kbd>Home</kbd>/<kbd>End</kbd> row start / end, <kbd>Shift</kbd>+<kbd>Space</kbd> whole row, <kbd>Ctrl</kbd>+<kbd>Space</kbd> whole column, <kbd>Ctrl</kbd>+<kbd>A</kbd> all; a row number or column letter for the whole row or column. <kbd>R</kbd>: reading order. Double-click or <kbd>Enter</kbd> edits a cell’s words. Keys: <kbd>M</kbd> merge · <kbd>S</kbd> split · <kbd>H</kbd> TH · <kbd>D</kbd> TD · <kbd>Del</kbd> empty · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy / paste words · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo.</p>
+      </div>
+    </div>
+  </div>
+  <menu>
+    <button id="tbUndo" title="Undo the last change (Ctrl+Z)">↶ Undo</button>
+    <button class="primary" id="tbDone">Done</button>
+  </menu>
+</dialog>
+
+<dialog id="lstDlg" class="xwide tbldlg">
+  <div class="dlg">
+    <div class="lhead"><h3>Edit list</h3><span class="chip" id="lsInfo"></span><div class="spacer"></div>
+      <button class="sm" id="lsPage" title="Split, join and add items on the page itself">Edit on the page ▸</button>
+      <button class="sm" id="lsClose2" title="Close (Esc)">✕</button></div>
+    <div class="tbsplit">
+      <div class="tbimgpane">
+        <div class="tbimghead"><div class="seg" id="lsParts"></div><div class="spacer"></div>
+          <button class="sm" id="lsZoomOut">−</button><button class="sm" id="lsZoomIn">＋</button></div>
+        <div class="tbimgwrap" id="lsImgWrap"><div class="tbimgbox" id="lsImgBox"><img id="lsImg" alt="The list as it is printed"><div class="tbimgov" id="lsImgOv"></div></div></div>
+        <p class="tiny muted">The list as printed. Click an item to pick it · <kbd>Shift</kbd>+click inside an item: split it there · drag the line between two items to move it · double-click it: join the two.</p>
+      </div>
+      <div class="tbgridpane">
+        <div class="tbtools">
+          <div class="tbgroup"><span class="tblabel">Item</span>
+            <button class="sm" id="lsIndent" title="Under the item above (a nested list) — Tab">→ Nest</button>
+            <button class="sm" id="lsOutdent" title="Out of its nested list — Shift+Tab">← Un-nest</button>
+            <button class="sm" id="lsUp" title="Move up">↑</button><button class="sm" id="lsDown" title="Move down">↓</button>
+            <button class="sm" id="lsMerge" title="The item and the next one become one">Join with next</button>
+            <button class="sm" id="lsRelabel" title="Read the item's label and words off the page again">Find the label</button>
+            <button class="sm" id="lsRemove" title="Out of the list: a paragraph">Take out</button>
+            <button class="sm" id="lsArt" title="Out of the list and not read">Make artifact</button>
+            <button class="sm" id="lsSelNone" title="Back to one item (Esc)" disabled>Clear selection</button></div>
+          <div class="tbgroup lsreadgroup"><span class="tblabel">Reading order</span>
+            <button class="sm robtn" id="lsRead" title="Hear the items in the order a screen reader reads them, from the picked item on (each item lit as it is read)">🔊 Read the list</button>
+            <label class="row tiny" title="Say the words aloud (off: the items still step at reading speed)"><input type="checkbox" id="lsSpeak" checked> speak</label>
+            <span id="lsRateBox"></span></div>
+          <div class="tbgroup"><span class="tblabel">List</span>
+            <select class="sm" id="lsNumbering" title="Numbering of the picked item's list"></select>
+            <button class="sm" id="lsSplitList" title="The picked item and the ones after it become a new list">Split the list here</button>
+            <button class="sm" id="lsJoinNext" title="The next list's items join this one">Join the next list</button>
+            <button class="sm" id="lsNotList" title="Not a list: every item becomes a paragraph">Not a list</button></div>
+          <div class="tbgroup"><span class="tblabel">Whole list</span>
+            <button class="sm" id="lsJoinLoose" title="An item with no label is the wrapped line of the item above it: they become one item">Join lines with no label</button>
+            <button class="sm" id="lsByLabels" title="The items made again from the printed lines: a new item at each label">Items at the labels</button>
+            <button class="sm" id="lsPerLine" title="One item per printed line">One item per line</button>
+            <button class="sm" id="lsAutoNest" title="Nest by the labels: 1. outside, a) one level in, i. another … (by indent where there is no label)">Nest by labels</button>
+            <button class="sm" id="lsFlatten" title="Every item in the outer list (no nesting)">Flatten</button>
+            <button class="sm" id="lsNumAuto" title="Each list's numbering (Decimal, LowerAlpha, Disc …) from its labels">Numbering from labels</button></div>
+          <div class="tbgroup"><span class="tblabel">Same format elsewhere</span>
+            <span class="tiny">select the list, <kbd>Ctrl</kbd>/<kbd>Alt</kbd>+<kbd>number</kbd> marks it — click the next lists — <kbd>Esc</kbd> releases</span></div>
+          <div class="tbgroup hidden"><span class="tblabel">Template</span>
+            <label class="inline small">#<input type="number" id="lsTplNum" min="1" style="width:56px" placeholder="new"></label>
+            <input class="sm" id="lsTplName" placeholder="name (optional)" style="width:130px">
+            <button class="sm primary" id="lsTplSave">Save as template</button>
+            <select class="sm" id="lsTplPick"></select>
+            <button class="sm" id="lsTplApply">Apply to this list</button>
+            <button class="sm" id="lsTplMode">Apply to lists I click ▸</button></div>
+        </div>
+        <div class="small muted tbsel" id="lsSel"></div>
+        <div class="lsitems" id="lsItems" role="listbox" aria-label="List items"></div>
+        <p class="tiny muted">Click an item; <kbd>Shift</kbd>+click for a run of items, <kbd>Ctrl</kbd>+click to add or drop one. <kbd>↑</kbd> <kbd>↓</kbd> move, <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> select more, <kbd>Ctrl</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> (or <kbd>Home</kbd>/<kbd>End</kbd>) first / last, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> select to the first / last, <kbd>Ctrl</kbd>+<kbd>A</kbd> all, <kbd>Ctrl</kbd>+<kbd>Space</kbd> add or drop the item. The buttons work on every selected item: <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> nest and un-nest, <kbd>J</kbd> join, <kbd>Del</kbd> take out. Double-click a label or its words to change them.</p>
+      </div>
+    </div>
+  </div>
+  <menu>
+    <button id="lsUndo">↶ Undo</button>
+    <button class="primary" id="lsDone">Done</button>
+  </menu>
+</dialog>
+
+<dialog id="previewDlg" class="wide">
+  <div class="dlg">
+    <h3>Screen-reader preview</h3>
+    <p class="muted small">Roughly what assistive technology announces, in reading order. Artifacts are skipped.</p>
+    <div class="sr" id="srBody"></div>
+  </div>
+  <menu><button onclick="this.closest('dialog').close()">Close</button></menu>
+</dialog>
+
+<dialog id="aiDlg">
+  <div class="dlg">
+    <h3>Local AI helpers</h3>
+    <p class="muted small">Uses the Ollama server set in Settings. Suggestions are drafts — review each one.</p>
+    <div class="btnrow">
+      <button id="aiAltAll">Draft alt text for every figure without one</button>
+      <button id="aiRoles">Review tag roles</button>
+      <button id="aiHeads">Check heading levels</button>
+      <button id="aiLinks">Describe weak links</button>
+      <button id="aiFields">Label form fields</button>
+      <button id="aiTables">Summarise tables</button>
+      <button id="aiMath">Read formulas aloud</button>
+    </div>
+    <p class="tiny muted">Each button asks the model only about the items that still need it. Nothing is written until you press <b>apply</b> on a line.</p>
+    <div id="aiOut"></div>
+  </div>
+  <menu><button onclick="this.closest('dialog').close()">Close</button></menu>
+</dialog>
+
+<dialog id="reanDlg">
+  <div class="dlg">
+    <h3>Re-analyse the whole file</h3>
+    <p class="muted small">Every page is analysed again exactly like at upload (OCR, tables, lists, write-in lines, contrast…). <b>All tags and manual edits are replaced</b>; the current tags are saved in the job folder as <span class="mono">model.before_reanalyse.json</span>.</p>
+    <label>Existing tags in the PDF
+      <select id="reanMode">
+        <option value="auto">auto — keep good tags, re-tag weak ones</option>
+        <option value="retag">retag — ignore existing tags, tag from scratch</option>
+        <option value="import">import — keep the tags already in the file</option>
+      </select></label>
+    <label class="row"><input type="checkbox" id="reanAiTable"> AI table structure check (vision model decides doubtful table rows; slower)</label>
+    <label class="row"><input type="checkbox" id="reanAiAlt"> AI alt text for figures</label>
+    <p class="small" id="reanOut"></p>
+  </div>
+  <menu>
+    <button class="primary" id="reanGo">Re-analyse whole file</button>
+    <button onclick="this.closest('dialog').close()">Cancel</button>
+  </menu>
+</dialog>
+
+<dialog id="retagDlg" class="pgdlg">
+  <div class="dlg">
+    <h3 id="retagTitle">Tags on pages</h3>
+    <p class="muted small">Pick the pages, then what to do with their tags. Other pages are not touched; Undo brings the tags back.</p>
+    <div class="pgscope" role="radiogroup" aria-label="Which pages">
+      <label class="pgopt"><input type="radio" name="pgScope" value="page" checked>
+        <span><b>This page</b><span class="tiny muted" id="pgThis"></span></span></label>
+      <label class="pgopt"><input type="radio" name="pgScope" value="range">
+        <span><b>From page</b> <input type="number" id="pgFrom" min="1" class="pgnum"> <b>to</b> <input type="number" id="pgTo" min="1" class="pgnum"></span></label>
+      <label class="pgopt"><input type="radio" name="pgScope" value="list">
+        <span><b>Pages</b> <input id="retagPages" placeholder="e.g. 5, 8-12, 20" class="pglist"></span></label>
+      <label class="pgopt"><input type="radio" name="pgScope" value="all">
+        <span><b>The whole file</b><span class="tiny muted" id="pgAll"></span></span></label>
+    </div>
+    <div class="pgacts">
+      <button class="pgact" id="retagGo" type="button"><span class="ic">⚡</span><span><b>Auto-tag</b><span class="tiny">replace the tags with the proposal made at upload — quick</span></span></button>
+      <button class="pgact" id="pgReanGo" type="button"><span class="ic">🔍</span><span><b>Re-analyse</b><span class="tiny">read these pages again with the current options, then tag them</span></span></button>
+      <button class="pgact danger" id="untagGo" type="button"><span class="ic">🗑</span><span><b>Remove tags</b><span class="tiny">take every tag off these pages — to tag them by hand</span></span></button>
+    </div>
+    <p class="small" id="retagOut" role="status"></p>
+  </div>
+  <menu>
+    <button onclick="this.closest('dialog').close()">Close</button>
+  </menu>
+</dialog>
+
+<dialog id="splitDlg">
+  <div class="dlg">
+    <h3>Split a two-page spread</h3>
+    <p class="muted small">The left half stays this page and the right half becomes the next page, so a
+      screen reader reads the left page and then the right page. Nothing printed changes: each new page
+      simply shows its own half. Every tag goes with its half and every later page moves up by one;
+      contents links are searched again so they land on the right sheet.</p>
+    <p class="small" id="splitInfo"></p>
+    <label>Cut at<select id="splitWhere">
+      <option value="0.5" selected>the middle (50%)</option>
+      <option value="0.45">45% from the left</option><option value="0.55">55% from the left</option>
+    </select></label>
+    <p class="tiny muted">Colours are measured again afterwards, and Undo starts afresh — use
+      “Put the last split back” to return to the sheet as it was.</p>
+    <p class="small" id="splitOut"></p>
+  </div>
+  <menu>
+    <button class="primary" id="splitGo">Split this page</button>
+    <button id="splitAll" class="hidden">Split every double page</button>
+    <button id="splitUndo" class="hidden">Put the last split back</button>
+    <button onclick="this.closest('dialog').close()">Close</button>
+  </menu>
+</dialog>
+
+<div class="popover hidden" id="rolePop">
+  <div class="small muted">Tag this area as — or press its key (T table · 1–6 headings · F figure · S span · O quote · I / Enter: let the tool decide)</div>
+  <div class="roles" id="popRoles"></div>
+  <label class="row small" title="Table / list: the vision model counts the rows and columns and picks the grid with that shape · Figure: drafts the alt text · Formula: reads it aloud · Auto: decides what the zone is. Uses the models set in Settings. Off to start with — tick it only for a zone you want the model to look at; it then stays ticked for the next one"><input type="checkbox" id="popAi"> use the AI (Ollama) for this zone</label>
+  <label class="row small popinside hidden" id="popInsideRow" title="Span, Quote, Lbl, Reference, Code, Note, Formula, Figure: the new tag is read inside this tag, where it is printed (P > Span). Off: a tag of its own beside it"><input type="checkbox" id="popInside" checked> inside <b id="popInsideWhat"></b> <span class="tiny muted">(Span, Quote, Lbl …)</span></label>
+  <label class="row small"><input type="checkbox" id="popAbsorb" checked> replace tags inside</label>
+  <label class="row small" title="For P: what the lines inside the area become">
+    <select id="popSplit" class="sm">
+      <option value="paragraphs">P: one tag per paragraph</option>
+      <option value="lines" title="Each printed row becomes one tag — the line number or score printed in the margin stays with its line">P: one tag per line</option>
+      <option value="">P: one tag for the whole zone</option>
+    </select></label>
+  <label class="row small" title="For Table and L: try every grid strategy and keep the one that fits the drawn area best"><input type="checkbox" id="popDeep" checked> deep read for Table / list</label>
+  <div class="btnrow" style="margin:6px 0 0"><button class="sm danger" id="popDelete" title="Every tag printed wholly inside this zone is deleted (Undo brings them back) — key Delete">🗑 Delete tags in zone <kbd>Del</kbd></button>
+    <div class="spacer"></div><button class="sm" id="popCancel">Cancel</button></div>
+</div>
+
+<script>
+  window.JOB = {{ meta.id|tojson }};
+  window.ROLES = {{ roles|tojson }};
+  window.ART_TYPES = {{ artifact_types|tojson }};
+  window.PAGINATION = {{ pagination|tojson }};
+  window.NUMBERING = {{ numbering|tojson }};
+  window.BLANK_TEXT = {{ opts.empty_cell_text|tojson }};
+  window.OPTS = {{ opts|tojson }};
+  window.BLANK_LINE = {{ opts.blank_line_text|tojson }};
+  window.MULTI_BLANK_LINE = {{ (opts.multi_blank_line_text or opts.blank_line_text)|tojson }};
+  window.META = {{ {'stage': meta.stage, 'built': meta.built, 'mode': meta.mode, 'link_direction': opts.link_direction, 'profile': meta.get('profile') or ''}|tojson }};
+</script>
+{% endif %}
+<script>window.JOB = window.JOB || {{ meta.id|tojson }}; window.BUSY = {{ busy|tojson }}; window.READONLY = {{ readonly|tojson }};</script>
+{% endblock %}
+
+{% block scripts %}<script src="{{ url_for('static', filename='editor.js') }}?v={{ asset_v }}"></script>
+<script src="{{ url_for('static', filename='links.js') }}?v={{ asset_v }}"></script>
+<script src="{{ url_for('static', filename='tableedit.js') }}?v={{ asset_v }}"></script>
+<script src="{{ url_for('static', filename='listedit.js') }}?v={{ asset_v }}"></script>
+<script src="{{ url_for('static', filename='reader.js') }}?v={{ asset_v }}"></script>
+<script src="{{ url_for('static', filename='review.js') }}?v={{ asset_v }}"></script>
+<script>(function () {
+  const b = document.getElementById('profChip');
+  if (b) b.addEventListener('click', () => UA.pickProfile({{ meta.id|tojson }}, {{ meta.filename|tojson }},
+    (r) => { if (r.reanalysed) setTimeout(() => location.reload(), 600); else b.textContent = r.profile; }));
+})();</script>{% endblock %}

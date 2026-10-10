@@ -1,0 +1,9 @@
+pymupdf>=1.24
+pikepdf>=8.0
+fonttools>=4.40
+flask>=3.0
+openpyxl>=3.1
+numpy>=1.24          # V4.25: the self-learning brain (its own trained model, the memory)
+# optional
+# playwright   (only for tests/ui_test.py)
+# waitress     (production server on Windows/Linux: waitress-serve --port=8000 app:app)

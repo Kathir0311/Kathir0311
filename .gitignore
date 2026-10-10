@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+jobs/
+sample_files/
+config.json
+users.json
