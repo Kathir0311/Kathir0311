@@ -36,6 +36,21 @@ turns that database into something that learns and decides on its own:
 
 Every change carries a note “brain: …” in the editor and can be undone.
 With no samples, no trained model and the AI switched off, nothing changes.
+
+V4.27 — the same brain, more honest and more consistent:
+
+* **Honest probabilities.** The model's accuracy is measured by cross-validation
+  over *files* (every file held out once; one held-out fifth when the data is
+  big), and the held-out predictions fix a temperature that makes "78 % sure" mean
+  right 78 % of the time (saved inside the model; an older model loads with 1.0).
+* **One file, one convention.** The verdicts the learned sources are sure of are
+  pooled over the tags of the same look in the file (`layout_voices`), so a tag
+  with moderate evidence follows the sure ones — as loud as the look is consistent
+  and silent when it is not. A heading takes the level the file gives its look
+  (`_unify_levels`); the doubtful tags are listed by what their answer teaches
+  (`_review_first`).
+* **Recent and forgetful.** Newer examples count a little more (`recency`); a
+  source is judged by about its last 600 decisions (`forget_trust`).
 """
 from __future__ import annotations
 
@@ -93,12 +108,22 @@ DOC_TYPES = ["journal_article", "book", "teachers_guide", "workbook", "assessmen
 HEADINGS = L.HEADINGS
 SWAP = L.SWAP                                  # H1–H6, P, Caption, BlockQuote
 LEARNABLE = (L.TEXT_ROLES - {"H"})             # what the trained model may say
-SOURCES = ("rules", "samples", "model", "style", "wording", "code", "ai")
-BASE_WEIGHT = {"rules": 1.0, "samples": 1.0, "model": 1.2, "style": 1.1, "wording": 1.4, "code": 1.5, "ai": 1.3}
+SOURCES = ("rules", "samples", "model", "style", "wording", "code", "layout", "ai")
+BASE_WEIGHT = {"rules": 1.0, "samples": 1.0, "model": 1.2, "style": 1.1, "wording": 1.4, "code": 1.5, "layout": 1.0,
+               "ai": 1.3}
 STRENGTH = {   # share the winner needs, independent sources that must agree
     "careful": (0.72, 2), "balanced": (0.60, 2), "bold": (0.52, 1)}
 VEC_DIM = 256
 FP_DIM = 512
+# V4.27
+CV_MAX_ROWS = 12000       # up to this many examples the accuracy is measured by cross-validation over files
+CV_FOLDS = 4
+TRUST_WINDOW = 600        # a source is judged by about its last 600 decisions, not by its whole history
+LAYOUT_MIN = 3            # other tags of the same look in the file before they speak
+LAYOUT_PURE = (0.65, 0.95)  # how much of one role the sure others show: silent below the first, in full above the second
+LAYOUT_FIRM = 0.8         # at least this much of one role (and 4 others) and the voice counts as an agreeing source
+RECENT_FLOOR = 0.6        # the weight of a very old example (1.0 = today)
+RECENT_HALF_LIFE = 365.0  # days
 STOP = set("the and for that with this from are was were have has had not but you your our their they "
            "its into than then them will can all any each per also may more most such which who what "
            "when where how other some one two three use used using".split())
@@ -115,6 +140,13 @@ def ensure(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE feedback ADD COLUMN node TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass
+    have = {r[1] for r in c.execute("PRAGMA table_info(brain_models)")}
+    for col in ("logloss REAL", "ece REAL", "temperature REAL", "folds INTEGER"):     # V4.27: honest probabilities
+        if col.split()[0] not in have:
+            try:
+                c.execute(f"ALTER TABLE brain_models ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
 
 
 def _np():
@@ -362,9 +394,12 @@ class RoleModel:
 
     DIM = 4096
 
-    def __init__(self, classes, mean, std, Wd, Ws, b):
+    def __init__(self, classes, mean, std, Wd, Ws, b, T: float = 1.0):
         self.classes = list(classes)
         self.mean, self.std, self.Wd, self.Ws, self.b = mean, std, Wd, Ws, b
+        # V4.27: the temperature that makes its probabilities honest (fitted on
+        # files it was not trained on; 1.0 = as the softmax says)
+        self.T = float(T) if T and float(T) > 0 else 1.0
 
     @staticmethod
     def _sparse(np, token_rows, dim):
@@ -429,32 +464,114 @@ class RoleModel:
                 params[i] -= lr * mh / (np.sqrt(vh) + eps)
         return m
 
+    def logits(self, dense_rows, token_rows):
+        """The raw scores (before the softmax and the temperature)."""
+        np = _np()
+        if not dense_rows:
+            return np.zeros((0, len(self.classes)), dtype=np.float32)
+        X = (np.asarray(dense_rows, dtype=np.float32) - self.mean) / self.std
+        ci, starts = self._sparse(np, token_rows, self.DIM)
+        return self._logits(np, X, ci, starts)
+
     def predict(self, dense_rows, token_rows):
         np = _np()
         if not dense_rows:
             return np.zeros((0, len(self.classes)))
-        X = (np.asarray(dense_rows, dtype=np.float32) - self.mean) / self.std
-        ci, starts = self._sparse(np, token_rows, self.DIM)
-        Z = self._logits(np, X, ci, starts)
-        Z -= Z.max(1, keepdims=True)
-        P = np.exp(Z)
-        return P / P.sum(1, keepdims=True)
+        return softmax(self.logits(dense_rows, token_rows), self.T)
 
     def to_bytes(self) -> bytes:
         np = _np()
         bio = io.BytesIO()
         np.savez_compressed(bio, mean=self.mean, std=self.std, Wd=self.Wd, Ws=self.Ws.astype(np.float16),
-                            b=self.b, classes=np.asarray(json.dumps(self.classes)))
+                            b=self.b, classes=np.asarray(json.dumps(self.classes)),
+                            T=np.asarray(self.T, dtype=np.float32))
         return bio.getvalue()
 
     @classmethod
     def from_bytes(cls, raw: bytes) -> "RoleModel":
         np = _np()
         z = np.load(io.BytesIO(raw), allow_pickle=False)
-        return cls(json.loads(str(z["classes"])), z["mean"], z["std"], z["Wd"], z["Ws"].astype(np.float32), z["b"])
+        T = float(z["T"]) if "T" in z.files else 1.0           # a model trained before V4.27 has none
+        return cls(json.loads(str(z["classes"])), z["mean"], z["std"], z["Wd"], z["Ws"].astype(np.float32), z["b"], T)
+
+
+# ================================================================ honest probabilities (V4.27)
+def softmax(Z, T: float = 1.0):
+    """Row-wise softmax of Z / T."""
+    np = _np()
+    Z = np.asarray(Z, dtype=np.float64) / (T or 1.0)
+    Z = Z - Z.max(1, keepdims=True)
+    P = np.exp(Z)
+    return P / P.sum(1, keepdims=True)
+
+
+def _nll(Z, y, T: float) -> float:
+    np = _np()
+    P = softmax(Z, T)
+    return float(-np.log(np.maximum(P[np.arange(len(y)), y], 1e-12)).mean())
+
+
+def fit_temperature(Z, y, lo: float = 0.4, hi: float = 8.0) -> float:
+    """The one number T that makes softmax(Z / T) as honest as it can be on
+    files the model did not train on (it minimises the log-loss).
+
+    A model trained for many rounds on few examples is too sure of itself
+    (T > 1 spreads its probabilities out); one trained on too much weight on
+    rare tags is too timid (T < 1). The brain weighs the model's voice against
+    the other sources, so a voice that says 99 % when it is right 70 % of the
+    time would outvote them for no reason."""
+    np = _np()
+    Z = np.asarray(Z, dtype=np.float64)
+    y = np.asarray(y, dtype=np.int64)
+    if len(y) < 10 or Z.ndim != 2 or Z.shape[1] < 2:
+        return 1.0
+    grid = np.exp(np.linspace(np.log(lo), np.log(hi), 40))
+    vals = [_nll(Z, y, float(t)) for t in grid]
+    i = int(np.argmin(vals))
+    a, b = float(grid[max(0, i - 1)]), float(grid[min(len(grid) - 1, i + 1)])
+    g = (math.sqrt(5.0) - 1.0) / 2.0                     # golden section inside the best cell
+    c_, d_ = b - g * (b - a), a + g * (b - a)
+    fc, fd = _nll(Z, y, c_), _nll(Z, y, d_)
+    for _ in range(28):
+        if fc < fd:
+            b, d_, fd = d_, c_, fc
+            c_ = b - g * (b - a)
+            fc = _nll(Z, y, c_)
+        else:
+            a, c_, fc = c_, d_, fd
+            d_ = a + g * (b - a)
+            fd = _nll(Z, y, d_)
+    return round(float((a + b) / 2.0), 4)
+
+
+def calibration_error(P, y, bins: int = 10) -> float:
+    """Expected calibration error: how far 'I am 90 % sure' is from 'right 90 % of the time'."""
+    np = _np()
+    P = np.asarray(P, dtype=np.float64)
+    y = np.asarray(y, dtype=np.int64)
+    if len(y) == 0:
+        return 0.0
+    conf = P.max(1)
+    hit = (P.argmax(1) == y).astype(np.float64)
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    err = 0.0
+    for k in range(bins):
+        m = (conf > edges[k]) & (conf <= edges[k + 1]) if k else (conf >= edges[k]) & (conf <= edges[k + 1])
+        if m.any():
+            err += m.mean() * abs(float(hit[m].mean()) - float(conf[m].mean()))
+    return float(err)
 
 
 _MODEL = {"id": None, "model": None, "meta": None, "checked": 0.0}
+_MODEL_COLS = ("id", "created", "n_train", "n_samples", "classes", "accuracy", "macro_f1", "baseline", "per_role",
+               "trigger", "seconds", "logloss", "ece", "temperature", "folds")
+
+
+def _model_cols(c: sqlite3.Connection) -> str:
+    """The columns of brain_models that this database has (a column added by an update may be missing
+    for a moment in a database another process is still holding)."""
+    have = {r[1] for r in c.execute("PRAGMA table_info(brain_models)")}
+    return ", ".join(k for k in _MODEL_COLS if k in have)
 
 
 def latest_model(refresh: bool = False):
@@ -464,8 +581,7 @@ def latest_model(refresh: bool = False):
     if not refresh and _MODEL["model"] is not None and time.time() - _MODEL["checked"] < 30:
         return _MODEL["model"], _MODEL["meta"]
     with L.connect() as c:
-        r = c.execute("SELECT id, created, n_train, n_samples, classes, accuracy, macro_f1, baseline, per_role, "
-                      "trigger, seconds FROM brain_models ORDER BY id DESC LIMIT 1").fetchone()
+        r = c.execute(f"SELECT {_model_cols(c)} FROM brain_models ORDER BY id DESC LIMIT 1").fetchone()
         if r is None:
             _MODEL.update(id=None, model=None, meta=None, checked=time.time())
             return None, None
@@ -502,30 +618,48 @@ def _sample_weight(role: str, words: int, lines: int) -> float:
     return 1.0
 
 
+def recency(stamp, now: datetime | None = None) -> float:
+    """1.0 for what was learned today, falling to RECENT_FLOOR for what is years old.
+
+    A client's style moves on (a new edition, a new designer); what was learned
+    last year still counts, but this year's files count a little more."""
+    try:
+        t = datetime.fromisoformat(str(stamp)[:19])
+    except (TypeError, ValueError):
+        return 1.0
+    age = max(0.0, ((now or datetime.now()) - t).total_seconds() / 86400.0)
+    return RECENT_FLOOR + (1.0 - RECENT_FLOOR) * 0.5 ** (age / RECENT_HALF_LIFE)
+
+
 def training_rows(c: sqlite3.Connection, cap: int = 40000) -> list[tuple]:
     """(dense, tokens, role, weight, group) for every example the database holds."""
     rows = []
-    q = ("SELECT b.*, s.client AS sclient, d.doc_type AS dtype FROM blocks b JOIN samples s ON s.id=b.sample_id "
-         "LEFT JOIN docs d ON d.sample_id=b.sample_id WHERE s.enabled=1 AND s.status='ready'")
+    now = datetime.now()
+    q = ("SELECT b.*, s.client AS sclient, s.learned AS slearned, d.doc_type AS dtype FROM blocks b "
+         "JOIN samples s ON s.id=b.sample_id LEFT JOIN docs d ON d.sample_id=b.sample_id "
+         "WHERE s.enabled=1 AND s.status='ready'")
     for r in c.execute(q):
         f = dict(r)
         if f["role"] not in LEARNABLE:
             continue
         rows.append((dense(f), tokens(f, f["text"], f["sclient"] or "", f["dtype"] or ""), f["role"],
-                     _sample_weight(f["role"], int(f["words"] or 0), int(f["lines"] or 1)), f["sample_id"]))
-    q = ("SELECT b.*, s.client AS sclient, d.doc_type AS dtype FROM corrections b JOIN samples s ON s.id=b.sample_id "
-         "LEFT JOIN docs d ON d.sample_id=b.sample_id WHERE s.enabled=1 AND s.status='ready'")
+                     _sample_weight(f["role"], int(f["words"] or 0), int(f["lines"] or 1))
+                     * recency(f["slearned"], now), f["sample_id"]))
+    q = ("SELECT b.*, s.client AS sclient, s.learned AS slearned, d.doc_type AS dtype FROM corrections b "
+         "JOIN samples s ON s.id=b.sample_id LEFT JOIN docs d ON d.sample_id=b.sample_id "
+         "WHERE s.enabled=1 AND s.status='ready'")
     for r in c.execute(q):
         f = dict(r)
         if f["role"] not in LEARNABLE:
             continue
-        rows.append((dense(f), tokens(f, f["text"], f["sclient"] or "", f["dtype"] or ""), f["role"], 3.0,
-                     f["sample_id"]))
+        rows.append((dense(f), tokens(f, f["text"], f["sclient"] or "", f["dtype"] or ""), f["role"],
+                     3.0 * recency(f["slearned"], now), f["sample_id"]))
     for r in c.execute("SELECT * FROM feedback"):
         f = dict(r)
         if f["role"] not in LEARNABLE:
             continue
-        rows.append((dense(f), tokens(f, f["text"], f["client"] or "", ""), f["role"], 1.5, "fb:" + str(f["job"])))
+        rows.append((dense(f), tokens(f, f["text"], f["client"] or "", ""), f["role"],
+                     1.5 * recency(f.get("created"), now), "fb:" + str(f["job"])))
     if len(rows) > cap:
         # keep every rarer tag, thin out the paragraphs
         import random
@@ -537,7 +671,7 @@ def training_rows(c: sqlite3.Connection, cap: int = 40000) -> list[tuple]:
     return rows
 
 
-def _split(rows: list[tuple]) -> tuple[list, list]:
+def _split_idx(rows: list[tuple]) -> tuple[list[int], list[int]]:
     """Held-out *files* (about a fifth of the examples): the accuracy says how
     the brain does on a file it has never seen, not on texts it memorised."""
     groups = collections.Counter(r[4] for r in rows)
@@ -549,21 +683,56 @@ def _split(rows: list[tuple]) -> tuple[list, list]:
                 break
             hold.add(g)
             k += groups[g]
-        tr = [r for r in rows if r[4] not in hold]
-        te = [r for r in rows if r[4] in hold]
+        tr = [i for i, r in enumerate(rows) if r[4] not in hold]
+        te = [i for i, r in enumerate(rows) if r[4] in hold]
         if tr and te:
             return tr, te
     tr, te = [], []
-    for i, r in enumerate(rows):
-        (te if i % 5 == 0 else tr).append(r)
+    for i, _ in enumerate(rows):
+        (te if i % 5 == 0 else tr).append(i)
     return tr, te
 
 
+def _split(rows: list[tuple]) -> tuple[list, list]:
+    tr, te = _split_idx(rows)
+    return [rows[i] for i in tr], [rows[i] for i in te]
+
+
+def _grouped_folds(rows: list[tuple], k: int) -> list[tuple[list[int], list[int]]]:
+    """[(train indexes, test indexes)] — cross-validation over *files* (V4.27).
+
+    Every file is held out exactly once, so the accuracy is measured on all of
+    the examples instead of a fifth of them (with a handful of sample files a
+    single hold-out can be three files, and the number then says more about
+    which three than about the brain). The files go to the folds biggest first,
+    each into the lightest fold, in an order fixed by their names: the same
+    data always gives the same folds."""
+    groups = collections.Counter(r[4] for r in rows)
+    k = max(2, min(k, len(groups)))
+    load = [0] * k
+    fold_of: dict = {}
+    for g in sorted(groups, key=lambda g: (-groups[g], zlib.crc32(g.encode()), g)):
+        j = min(range(k), key=lambda j: (load[j], j))
+        fold_of[g] = j
+        load[j] += groups[g]
+    out = []
+    for j in range(k):
+        te = [i for i, r in enumerate(rows) if fold_of[r[4]] == j]
+        tr = [i for i, r in enumerate(rows) if fold_of[r[4]] != j]
+        if te and tr:
+            out.append((tr, te))
+    return out
+
+
 def _metrics(model: RoleModel, rows: list[tuple]) -> dict:
-    np = _np()
     P = model.predict([r[0] for r in rows], [r[1] for r in rows])
-    pred = [model.classes[int(i)] for i in P.argmax(1)]
-    gold = [r[2] for r in rows]
+    return _metrics_probs(model.classes, P, [r[2] for r in rows])
+
+
+def _metrics_probs(classes: list, P, gold: list) -> dict:
+    """Accuracy, macro-F1, precision / recall per tag … of predictions P (rows × classes)."""
+    np = _np()
+    pred = [classes[int(i)] for i in P.argmax(1)]
     acc = sum(1 for a, b in zip(pred, gold) if a == b) / max(1, len(gold))
     base_role = collections.Counter(gold).most_common(1)[0][0] if gold else "P"
     baseline = sum(1 for g in gold if g == base_role) / max(1, len(gold))
@@ -582,6 +751,39 @@ def _metrics(model: RoleModel, rows: list[tuple]) -> dict:
     del np
     return {"accuracy": round(acc, 4), "macro_f1": round(sum(f1s) / max(1, len(f1s)), 4),
             "baseline": round(baseline, 4), "per_role": per, "n": len(gold)}
+
+
+def evaluate(rows: list[tuple], classes: list, progress=None) -> tuple[dict, float, int]:
+    """-> (metrics, temperature, folds): how the brain does on files it did not train on.
+
+    V4.27: cross-validation over files (every file held out once) while the data is small
+    enough to train a few times; one held-out fifth when it is big. The held-out predictions
+    also tell the model how sure it is allowed to sound (the temperature)."""
+    np = _np()
+    ev = {"accuracy": None, "macro_f1": None, "baseline": None, "per_role": {}, "n": 0,
+          "logloss": None, "ece": None, "ece_raw": None}
+    if len(rows) < 24 or len({r[4] for r in rows}) < 2:
+        return ev, 1.0, 0
+    folds = _grouped_folds(rows, CV_FOLDS) if len(rows) <= CV_MAX_ROWS else [_split_idx(rows)]
+    Zs, golds = [], []
+    for k, (tr_i, te_i) in enumerate(folds, start=1):
+        if progress:
+            progress(0.05 + 0.5 * k / max(1, len(folds)),
+                     f"measuring {k}/{len(folds)}: training on {len(tr_i)}, testing on {len(te_i)}")
+        m_eval = RoleModel.fit([rows[i][0] for i in tr_i], [rows[i][1] for i in tr_i],
+                               [rows[i][2] for i in tr_i], [rows[i][3] for i in tr_i], classes)
+        Zs.append(m_eval.logits([rows[i][0] for i in te_i], [rows[i][1] for i in te_i]))
+        golds += [rows[i][2] for i in te_i]
+    if not Zs:
+        return ev, 1.0, 0
+    Z = np.concatenate(Zs, 0)
+    y = np.asarray([classes.index(g) for g in golds], dtype=np.int64)
+    temperature = fit_temperature(Z, y)
+    P = softmax(Z, temperature)
+    ev = _metrics_probs(classes, P, golds)
+    ev.update(logloss=round(_nll(Z, y, temperature), 4), ece=round(calibration_error(P, y), 4),
+              ece_raw=round(calibration_error(softmax(Z, 1.0), y), 4))
+    return ev, temperature, len(folds)
 
 
 def train(trigger: str = "manual", force: bool = False, progress=None) -> dict:
@@ -606,23 +808,19 @@ def train(trigger: str = "manual", force: bool = False, progress=None) -> dict:
             return {"ok": False, "error": f"not enough tagged examples yet ({len(rows)} usable, "
                                           f"{len(classes)} kind(s) of tag)"}
         n_samples = len({r[4] for r in rows})
-        ev = {"accuracy": None, "macro_f1": None, "baseline": None, "per_role": {}, "n": 0}
-        if len(rows) >= 24 and n_samples >= 2:
-            tr, te = _split(rows)
-            if progress:
-                progress(0.2, f"measuring: training on {len(tr)}, testing on {len(te)}")
-            m_eval = RoleModel.fit([r[0] for r in tr], [r[1] for r in tr], [r[2] for r in tr], [r[3] for r in tr],
-                                   classes)
-            ev = _metrics(m_eval, te)
+        ev, temperature, n_folds = evaluate(rows, classes, progress)
         if progress:
             progress(0.6, f"training on all {len(rows)} examples")
         model = RoleModel.fit([r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows],
                               [r[3] for r in rows], classes)
+        model.T = temperature
         secs = round(time.time() - t0, 1)
         cur = c.execute("INSERT INTO brain_models (created, n_train, n_samples, classes, accuracy, macro_f1, baseline, "
-                        "per_role, weights, signature, trigger, seconds) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "per_role, weights, signature, trigger, seconds, logloss, ece, temperature, folds) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (_now(), len(rows), n_samples, json.dumps(classes), ev["accuracy"], ev["macro_f1"],
-                         ev["baseline"], json.dumps(ev["per_role"]), model.to_bytes(), sig, trigger[:120], secs))
+                         ev["baseline"], json.dumps(ev["per_role"]), model.to_bytes(), sig, trigger[:120], secs,
+                         ev["logloss"], ev["ece"], temperature, n_folds))
         mid = cur.lastrowid
         # keep the last 40 trainings (the learning curve); the weights of old ones go
         c.execute("UPDATE brain_models SET weights=NULL WHERE id NOT IN "
@@ -632,7 +830,8 @@ def train(trigger: str = "manual", force: bool = False, progress=None) -> dict:
         _MODEL["checked"] = 0.0
         return {"ok": True, "id": mid, "examples": len(rows), "samples": n_samples, "classes": classes,
                 "accuracy": ev["accuracy"], "macro_f1": ev["macro_f1"], "baseline": ev["baseline"],
-                "tested_on": ev["n"], "seconds": secs}
+                "tested_on": ev["n"], "seconds": secs, "folds": n_folds, "temperature": temperature,
+                "ece": ev["ece"], "ece_raw": ev["ece_raw"], "logloss": ev["logloss"]}
     finally:
         c.close()
 
@@ -1076,6 +1275,120 @@ def _prev_heading(model, n) -> str:
     return last
 
 
+# ================================================================ one file, one convention (V4.27)
+def layout_voices(ctx: Context, cands: list, ops_list: list, need: float = 0.6, agree_min: int = 2) -> list:
+    """What the *other* tags of the same look in this file say — one more voice per tag.
+
+    A document keeps its conventions: the bold 14 pt lines are all section
+    headings or none of them is. Every tag was decided on its own text, its own
+    place and what the samples say. A tag that the learned sources are *sure*
+    of (as sure as the brain needs to change a tag: `need`, `agree_min` sources
+    agreeing) has a verdict worth sharing; this pools those verdicts over the
+    tags that share its exact look (font, size, weight, capitals) in the same
+    file, leaving the tag's own out. A heading whose wording is unusual is then
+    not left behind by its neighbours — and a lone odd one does not drag the
+    others along, because only sure verdicts are pooled.
+
+    The voice is as loud as the look is *consistent*: when the sure others agree on one role
+    (95 % and more) it speaks in full, when they split (65 % and less) it is silent — a look that
+    is a heading here and a label there has no convention to follow. (In a simulation of files
+    whose looks are 70 to 97 % consistent this is the difference between pooling that never loses
+    anything and pooling that costs a few per cent where looks are mixed.)
+
+    -> per candidate: None, or {"dist": {role: weight}, "firm": bool, "n": others}
+    `firm` (≥ 4 sure others, ≥ 80 % of them one role) lets the voice count as an
+    agreeing source; a weaker one only nudges the weighted share."""
+    n = len(cands)
+    dists: list = [None] * n
+    groups: dict = collections.defaultdict(list)
+    for i, ((_, _, _, f), ops) in enumerate(zip(cands, ops_list)):
+        groups[style_key(f)].append(i)
+        learned = {k: v for k, v in ops.items() if k not in ("rules", "layout") and v}
+        if not learned:
+            continue                       # nothing learned about it: it has no verdict to share
+        score, win, share, _ = combine(ctx, learned)
+        agree = sum(1 for v in learned.values() if max(v, key=v.get) == win)
+        if not win or share < need or agree < agree_min:
+            continue                       # it is not sure of itself: nothing to share
+        tot = sum(score.values()) or 1.0
+        dists[i] = {r: s / tot for r, s in score.items()}
+    out: list = [None] * n
+    for idxs in groups.values():
+        voiced = [i for i in idxs if dists[i] is not None]
+        if len(voiced) < LAYOUT_MIN:
+            continue
+        total: collections.Counter = collections.Counter()
+        for j in voiced:
+            total.update(dists[j])
+        for i in idxs:
+            k = len(voiced) - (1 if dists[i] is not None else 0)
+            if k < LAYOUT_MIN:
+                continue
+            mean = collections.Counter(total)
+            if dists[i] is not None:
+                mean.subtract(dists[i])
+            mean = {r: v / k for r, v in mean.items() if v / k >= 0.08}
+            if not mean:
+                continue
+            top = max(mean.values())
+            lo, hi = LAYOUT_PURE
+            strength = min(1.0, k / 8.0) * max(0.0, min(1.0, (top - lo) / (hi - lo)))
+            if strength * top < 0.03:
+                continue                   # the sure others disagree: no convention to follow
+            out[i] = {"dist": {r: round(v * strength, 4) for r, v in mean.items()}, "n": k,
+                      "firm": k >= 4 and top >= LAYOUT_FIRM}
+    return out
+
+
+def _unify_levels(model, cands: list, shares: dict, out: dict) -> int:
+    """The same look gets the same heading level in one file.
+
+    A tag the brain made a heading takes the level the file already gives the
+    others of its look when those agree (≥ 3 headings, ≥ 75 % one level) and
+    the brain was not sure of its own level (< 85 %): H2 here and H3 there for
+    the very same type style is a mistake somebody has to find in the editor."""
+    by_look: dict = collections.defaultdict(collections.Counter)
+    for n, _, _, f in cands:
+        if n.id in model.nodes and n.role in HEADINGS:
+            by_look[style_key(f)][n.role] += 1
+    moved = 0
+    for n, _, _, f in cands:
+        share = shares.get(n.id)
+        if share is None or n.id not in model.nodes or n.role not in HEADINGS or share >= 0.85:
+            continue
+        cnt = by_look.get(style_key(f))
+        if not cnt or sum(cnt.values()) < 3:
+            continue
+        lvl, k = cnt.most_common(1)[0]
+        if lvl == n.role or k / sum(cnt.values()) < 0.75:
+            continue
+        old = n.role
+        n.role = lvl
+        n.style = dict(n.style or {}, level=int(lvl[1]))
+        n.note = (n.note + "; " if n.note else "") + f"brain: {lvl}, like the other {lvl}s of this look in the file"
+        out["changes"].append({"id": n.id, "from": old, "to": lvl, "why": "same look, same level"})
+        moved += 1
+    return moved
+
+
+def _review_first(cands: list, confs: list, changed: set, k: int = 8) -> list:
+    """The doubtful tags to look at first: those whose answer teaches the most.
+
+    A tag the brain is unsure of counts for more when many others in the file look
+    the same — one decision there settles them all (Think again, "make all N …")."""
+    size: collections.Counter = collections.Counter(style_key(f) for _, _, _, f in cands)
+    rows = []
+    for conf, _, i in confs:
+        n, role, text, f = cands[i]
+        if conf >= 0.6:
+            continue
+        same = size[style_key(f)] - 1
+        rows.append(((1.0 - conf) * (1.0 + 0.5 * math.log2(1 + same)), n, role, text, conf, same))
+    rows.sort(key=lambda t: -t[0])
+    return [{"id": n.id, "text": text[:70], "page": n.page, "role": n.role, "confidence": round(conf, 2),
+             "same_look": same, "changed": n.id in changed} for _, n, role, text, conf, same in rows[:k]]
+
+
 def think(model, pdf_path: str, opts=None, ai_cfg=None, client: str = "", job: str = "",
           know=None, docinfo: dict | None = None, weights: dict | None = None, progress=None,
           use_samples: bool = True) -> dict:
@@ -1157,12 +1470,26 @@ def think(model, pdf_path: str, opts=None, ai_cfg=None, client: str = "", job: s
                 probs = None
         unsure = []
         confs = []
+        # V4.27: first what each source says about every tag, then what the tags of the same look in
+        # this file say to each other — one file, one convention
+        pre = []
         for i, (n, role, text, f) in enumerate(cands):
             fired: list = []
-            ops = opinions(ctx, role, n.confidence, text, f, probs[i] if probs is not None else None, fired)
+            pre.append((opinions(ctx, role, n.confidence, text, f, probs[i] if probs is not None else None, fired),
+                        fired))
+        lay = layout_voices(ctx, cands, [p[0] for p in pre], need, agree_min) \
+            if (ctx.learned and not protect) else [None] * len(cands)
+        out["layout_voices"] = sum(1 for v in lay if v)
+        shares: dict = {}
+        for i, (n, role, text, f) in enumerate(cands):
+            ops, fired = pre[i]
+            lv = lay[i]
+            if lv:
+                ops["layout"] = lv["dist"]
             score, win, share, margin = combine(ctx, ops)
             learned_ops = {k: v for k, v in ops.items() if k != "rules"}
-            agree = sum(1 for k, v in learned_ops.items() if v and max(v, key=v.get) == win)
+            agree = sum(1 for k, v in learned_ops.items()
+                        if v and max(v, key=v.get) == win and (k != "layout" or lv["firm"]))
             final, chosen = role, "rules"
             if learned_ops and win and win != role and not protect:
                 why_not = allowed(model, n, win, text, f, ops)
@@ -1172,6 +1499,7 @@ def think(model, pdf_path: str, opts=None, ai_cfg=None, client: str = "", job: s
                     srcs = sorted(k for k, v in learned_ops.items() if max(v, key=v.get) == win)
                     if _retag(model, n, win, f"brain: {round(share * 100)} % — " + ", ".join(srcs), out, changed):
                         final, chosen = win, "+".join(srcs)
+                        shares[n.id] = share
                 elif not why_not and share >= 0.3:
                     unsure.append(i)
             elif learned_ops and win == role and share < 0.55:
@@ -1204,7 +1532,9 @@ def think(model, pdf_path: str, opts=None, ai_cfg=None, client: str = "", job: s
             if ctx.learned and conf < 0.45 and n.id not in changed and n.id in model.nodes:
                 n.confidence = round(min(n.confidence, conf), 2)
                 out["unsure"] += 1
+        out["levels_unified"] = _unify_levels(model, cands, shares, out) if shares else 0
         _fix_levels(model, changed)
+        out["review_first"] = _review_first(cands, confs, changed)
         tw = sum(w for _, w, _ in confs) or 1.0
         out["quality"] = round(100.0 * sum(c_ * w for c_, w, _ in confs) / tw, 1) if confs else None
         out["changed"] = len(changed)
@@ -1313,6 +1643,19 @@ def _final_roles(model) -> dict:
     return out
 
 
+def forget_trust(c: sqlite3.Connection, window: int = TRUST_WINDOW) -> int:
+    """A source is judged by about its last `window` decisions, not by its whole life (V4.27).
+
+    The trained model gets better with every file; the style map goes out of date
+    when a client changes designer. If the counts only ever grew, a source that
+    was wrong a thousand decisions ago would still be pulling its trust down long
+    after it had learned better. When a count passes the window, old and new are
+    scaled back together, so the share that was right stays and the next results
+    weigh more. -> how many counts were scaled."""
+    cur = c.execute("UPDATE trust SET ok = ok * (? * 1.0 / n), n = ? WHERE n > ?", (window, window, window))
+    return cur.rowcount or 0
+
+
 def learn_outcome(c: sqlite3.Connection, job: str, client: str, model, auto=None, when: str = "") -> dict:
     """An approved file: was each source right? And how much did the tool
     get right before people changed anything (the first-pass quality)?"""
@@ -1342,6 +1685,7 @@ def learn_outcome(c: sqlite3.Connection, job: str, client: str, model, auto=None
     for (src, role), n in tot.items():
         c.execute("INSERT INTO trust (source, role, ok, n) VALUES (?,?,?,?) ON CONFLICT(source, role) DO UPDATE SET "
                   "ok = ok + excluded.ok, n = n + excluded.n", (src, role, upd[(src, role)], n))
+    forget_trust(c)
     c.execute("UPDATE decisions SET learned=1 WHERE job=?", (job,))
     try:                                      # V4.26: was each learned rule right in this approved file?
         from . import codegen
@@ -1470,6 +1814,31 @@ def similar_tags(model, pdf_path: str, nid: str, from_role: str = "") -> list[di
 
 
 # ================================================================ for the editor
+_CTX: dict = {"key": None, "ctx": None, "at": 0.0}
+
+
+def cached_context(client: str, scope: str, weights: dict | None, doc_type: str, ttl: float = 120.0) -> Context:
+    """The context for the editor's popover (V4.27).
+
+    The popover asks about one tag after another; building the context reads every sample's tags
+    and memory, which takes a couple of seconds on a big database. It is kept while nothing was
+    learned and the model is the same."""
+    key = None
+    try:
+        with L.connect() as c:
+            sig = data_signature(c)
+        key = (client, scope, tuple(sorted((weights or {}).items())), doc_type, sig,
+               (latest_model()[1] or {}).get("id"))
+    except Exception:
+        key = None
+    if key is not None and _CTX["key"] == key and time.time() - _CTX["at"] < ttl:
+        return _CTX["ctx"]
+    ctx = Context(client, scope=scope, weights=weights, doc_type=doc_type)
+    if key is not None:
+        _CTX.update(key=key, ctx=ctx, at=time.time())
+    return ctx
+
+
 def explain(model, pdf_path: str, nid: str, client: str = "", scope: str = "client") -> dict:
     """What every source says about one tag (the editor's popover)."""
     n = model.nodes.get(nid)
@@ -1485,7 +1854,7 @@ def explain(model, pdf_path: str, nid: str, client: str = "", scope: str = "clie
         weights = None
         if scope == "all":
             weights = {s["id"]: 1.0 for s in bi.get("similar") or []}
-        ctx = Context(client, scope=scope, weights=weights, doc_type=bi.get("doc_type", ""))
+        ctx = cached_context(client, scope, weights, bi.get("doc_type", ""))
         probs = None
         if ctx.model is not None:
             probs = ctx.model.predict([dense(f)], [tokens(f, text, client, bi.get("doc_type", ""))])[0]
@@ -1511,10 +1880,12 @@ def status() -> dict:
     with L.connect() as c:
         if meta:
             out["model"] = {k: meta.get(k) for k in ("id", "created", "n_train", "n_samples", "classes", "accuracy",
-                                                      "macro_f1", "baseline", "per_role", "trigger", "seconds")}
+                                                      "macro_f1", "baseline", "per_role", "trigger", "seconds",
+                                                      "logloss", "ece", "temperature", "folds")}
         out["trainings"] = [dict(r) for r in c.execute(
-            "SELECT id, created, n_train, n_samples, accuracy, macro_f1, baseline, trigger, seconds FROM brain_models "
-            "ORDER BY id")]
+            "SELECT " + ", ".join(k for k in ("id", "created", "n_train", "n_samples", "accuracy", "macro_f1", "baseline",
+                                              "trigger", "seconds", "logloss", "ece", "temperature", "folds")
+                                  if k in _model_cols(c).split(", ")) + " FROM brain_models ORDER BY id")]
         tr = collections.defaultdict(dict)
         for r in c.execute("SELECT source, role, ok, n FROM trust ORDER BY source, n DESC"):
             tr[r["source"]][r["role"]] = {"ok": r["ok"], "n": r["n"]}
@@ -1523,7 +1894,7 @@ def status() -> dict:
         for src in SOURCES:
             d = tr.get(src, {})
             al = d.get("*", {"ok": 0, "n": 0})
-            out["trust"].append({"source": src, "ok": al["ok"], "n": al["n"],
+            out["trust"].append({"source": src, "ok": round(al["ok"], 1), "n": round(al["n"]),
                                  "right": round(al["ok"] / al["n"], 3) if al["n"] else None,
                                  "weight": round(BASE_WEIGHT[src] * ctx.trust_factor(src, "*"), 2),
                                  "roles": {r: v for r, v in d.items() if r != "*"}})

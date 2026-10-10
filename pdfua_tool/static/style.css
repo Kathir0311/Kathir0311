@@ -1540,6 +1540,8 @@ button.linkish{border:0;background:none;color:var(--accent);padding:0 2px;font-s
 .brainbox .bq{font-size:26px;font-weight:750;font-variant-numeric:tabular-nums;line-height:1.1}
 .brainbox .brow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .brainbox .bfacts{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.brainbox .revlist{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.brainbox .revitem{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sampsay .brsrc{display:block;margin-top:4px}
 @media (max-width:700px){.hbar.brbar{grid-template-columns:120px 1fr 40px 34px}}
 @media (max-width:700px){#pane-brain .ovhead{flex-wrap:wrap}#pane-brain .ovhead>div:first-child{flex-basis:100%}}

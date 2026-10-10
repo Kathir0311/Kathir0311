@@ -4,3 +4,4 @@ jobs/
 sample_files/
 config.json
 users.json
+pdfua_tool/tests/corpus/

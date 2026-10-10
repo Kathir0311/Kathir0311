@@ -46,7 +46,7 @@ from core.jobrunner import JobFailed, JobStopped, run_task
 from core.preflight import tesseract_info
 from core.report import write_batch_summary
 
-VERSION = "4.26.0"
+VERSION = "4.27.0"
 BASE = os.path.dirname(os.path.abspath(__file__))
 JOBS = os.environ.get("PDFUA_JOBS", os.path.join(BASE, "jobs"))
 CONFIG_PATH = os.environ.get("PDFUA_CONFIG", os.path.join(BASE, "config.json"))
@@ -4454,9 +4454,27 @@ def _brain_bg(args: list[str], what: str) -> bool:
     return True
 
 
+_KICK: dict = {"timer": None}
+
+
 def kick_brain_training() -> None:
-    """After a build taught the brain something: train again — at most every 10 min."""
-    if time.time() - float(_BRAIN_JOB.get("last") or 0) < 600:
+    """After a fix or a build taught the brain something: train again — at most every 10 min.
+
+    V4.27: a request that comes too early is not forgotten. Before, the fixes made in the last
+    minutes of an editing session were learned only if somebody happened to fix or build something
+    after the pause; now one training is made when the pause is over (it does nothing when there is
+    nothing new — the brain compares the data with what it last trained on)."""
+    t = _BRAIN_JOB.get("thread")
+    wait = 600 - (time.time() - float(_BRAIN_JOB.get("last") or 0))
+    if wait > 0 or (t is not None and t.is_alive()):
+        if _KICK["timer"] is None:
+            def later():
+                _KICK["timer"] = None
+                kick_brain_training()
+            tm = threading.Timer(max(60.0, wait) + 2.0, later)
+            tm.daemon = True
+            _KICK["timer"] = tm
+            tm.start()
         return
     _brain_bg(["train"], "train")
 

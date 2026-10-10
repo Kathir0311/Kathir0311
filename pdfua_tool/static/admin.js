@@ -791,7 +791,8 @@
 
   // ------------------------------------------------------------ the self-learning brain (V4.25)
   const SRC = { rules: 'The analysis\u2019 rules', samples: 'Nearest sample tags', model: 'Its own trained model',
-    style: 'The client\u2019s style map', wording: 'Wording memory', code: 'Learned code (its own rules)', ai: 'The local AI (Ollama)' };
+    style: 'The client\u2019s style map', wording: 'Wording memory', code: 'Learned code (its own rules)',
+    layout: 'The same look in this file', ai: 'The local AI (Ollama)' };
   const pct = (v) => (v === null || v === undefined) ? '—' : Math.round(v * (v <= 1 ? 100 : 1)) + ' %';
   function svgEl(tag, attrs) {
     const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -856,7 +857,8 @@
       el('div', { class: 'tbig', text: String(big) }), el('div', { class: 'tlabel', text: label }),
       sub ? el('div', { class: 'tsub tiny', text: sub }) : '');
     $('brTiles').replaceChildren(
-      tile(m && m.accuracy != null ? pct(m.accuracy) : '—', 'Model accuracy', m ? `held-out · chance ${pct(m.baseline)}` : 'needs a few sample files', 't-open'),
+      tile(m && m.accuracy != null ? pct(m.accuracy) : '—', 'Model accuracy',
+        m ? `held-out files${m.folds > 1 ? ` (${m.folds} rounds)` : ''} · chance ${pct(m.baseline)}${m.ece != null ? ` · calibration error ${(m.ece * 100).toFixed(1)} %` : ''}` : 'needs a few sample files', 't-open'),
       tile(c.files ? c.last + ' %' : '—', 'Right first time', c.files ? `${c.files} approved file(s) · first ${c.first} %` : 'after the first approved file', 't-done'),
       tile(m ? (m.n_train || 0).toLocaleString() : 0, 'Examples learned', m ? `${m.n_samples} file(s) · ${(m.classes || []).length} kinds of tag` : '', 't-files'),
       tile((d.memory || 0).toLocaleString(), 'Memory (RAG)', d.embedded ? `${d.embedded.toLocaleString()} with AI vectors` : 'hashed vectors', 't-fix'),
@@ -911,7 +913,7 @@
       el('td', { class: 'mono', text: `${r.id} v${r.version}` }),
       el('td', {}, el('span', { class: 'chip', text: `${(r.from_roles || []).join('/')} → ${r.target}` }), ' ', el('span', { class: 'small', text: r.description || '' })),
       el('td', { text: r.client || 'every client' }),
-      el('td', { text: `${r.positives} fix(es)${r.verified_pos ? ` · ${r.verified_pos} approved` : ''}${r.origin === 'ai' ? ' · AI' : ''}` }),
+      el('td', { text: `${r.positives} fix(es)${r.verified_pos ? ` · ${r.verified_pos} approved` : ''}${r.files ? ` · ${r.files} file(s)` : ''}${r.origin === 'ai' ? ' · AI' : ''}` }),
       el('td', { text: `${Math.round((r.precision || 0) * 1000) / 10} % of ${r.matched}` }),
       el('td', { text: r.right + r.wrong ? `${r.right} right · ${r.wrong} wrong` : '—' }),
       el('td', {}, el('span', { class: 'chip ' + (ST[r.status] || ''), title: r.note || '', text: r.status })),

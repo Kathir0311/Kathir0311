@@ -92,22 +92,30 @@ def learn(job_path: str, client: str, model, auto=None, verified: bool = False) 
 
 
 def _best(rows, client: str, any_client: bool):
-    """(value, how) of the memory to use, or None."""
+    """(value, how) of the memory to use, or None.
+
+    rows: (client, value, verified, job[, when]). The client's own memory comes first; then
+    the value people confirmed *last* (V4.27: when somebody improved an alt text in a newer
+    approved file, the newer one wins — not the one that happens to have been written more often);
+    then the one confirmed most, then the one seen most."""
     agg: dict = {}
     for r in rows:
         v = r[1]
-        e = agg.setdefault(v, {"n": 0, "verified": 0, "own": 0, "jobs": set()})
+        e = agg.setdefault(v, {"n": 0, "verified": 0, "own": 0, "jobs": set(), "latest": ""})
         e["n"] += 1
         e["verified"] += int(r[2] or 0)
         e["own"] += 1 if r[0] == client else 0
         e["jobs"].add(r[3])
+        when = str(r[4] or "") if len(r) > 4 else ""
+        if r[2] and when > e["latest"]:
+            e["latest"] = when
     good = []
     for v, e in agg.items():
         if not (e["verified"] or len(e["jobs"]) >= 2):
             continue
         if not e["own"] and not (any_client and e["verified"]):
             continue
-        good.append(((e["own"] > 0, e["verified"], e["n"]), v, e))
+        good.append(((e["own"] > 0, e["latest"], e["verified"], e["n"]), v, e))
     if not good:
         return None
     good.sort(key=lambda t: t[0], reverse=True)
@@ -140,8 +148,8 @@ def apply(model, job_path: str, client: str, any_client: bool = False, inv: dict
                     dg = inventory.digests_in(inv, n.page, _disp(doc, n.page, n.bbox))
                     if len(set(dg)) != 1:
                         continue
-                    rows = [(r["client"], r["alt"], r["verified"], r["job"]) for r in c.execute(
-                        "SELECT client, alt, verified, job FROM alt_memory WHERE digest=?", (dg[0],))]
+                    rows = [(r["client"], r["alt"], r["verified"], r["job"], r["updated"]) for r in c.execute(
+                        "SELECT client, alt, verified, job, updated FROM alt_memory WHERE digest=?", (dg[0],))]
                     best = _best(rows, client, any_client)
                     if best:
                         n.alt, n.source = best[0], "memory"
@@ -151,8 +159,8 @@ def apply(model, job_path: str, client: str, any_client: bool = False, inv: dict
                 text = " ".join((n.text or "").split())
                 if text and len(text) <= TEXT_MAX and not (n.actual_text or "").strip() and \
                         n.role not in ("Figure", "Formula", "Table", "L", "LI", "TR", "Link", "Document", "Sect"):
-                    rows = [(r["client"], r["said"], r["verified"], r["job"]) for r in c.execute(
-                        "SELECT client, said, verified, job FROM say_memory WHERE text=?", (text,))]
+                    rows = [(r["client"], r["said"], r["verified"], r["job"], r["updated"]) for r in c.execute(
+                        "SELECT client, said, verified, job, updated FROM say_memory WHERE text=?", (text,))]
                     best = _best(rows, client, any_client)
                     if best:
                         n.actual_text = best[0]

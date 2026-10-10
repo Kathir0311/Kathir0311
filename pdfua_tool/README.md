@@ -1,4 +1,4 @@
-# Dezquare PDF Accessibility Studio v4.26.0
+# Dezquare PDF Accessibility Studio v4.27.0
 
 Automated PDF/UA-1 tagging plus an Acrobat-style manual tag editor.
 
@@ -1369,6 +1369,7 @@ python tests/workflow_test.py          # V4.23.0 Production → QA → Final QA 
 python tests/teachers_guide_test.py    # V4.24.0 Academain Teacher's Guide: H1–H5 as the client's book, boxes H5 + P (no table), grid words, "Blank line", "Rr", "Page N", one Sect
 python tests/brain_test.py             # V4.25.0 the self-learning AI brain: samples studied, its own model trained, every client's samples, feedback, trust, learning curve
 python tests/selflearn_test.py         # V4.26.0 learned code written and checked, memory, one fix → the rest, inventory + coverage, privacy guard, rule book
+python tests/selfimprove_test.py       # V4.27.0 honest probabilities (calibration, cross-validation), one file one convention, tighter rules, newest memory wins
 python app.py & python tests/api_test.py && python tests/ui_test.py /tmp
 ```
 
@@ -1401,8 +1402,8 @@ core/edit.py        editor operations (draw, drop, wrap, list, merge, table head
 core/report.py      Excel report and batch summary
 core/ai.py          Ollama client
 core/learn.py       sample files: what a client's finished files teach
-core/brain.py       the self-learning AI brain (V4.25)
-core/codegen.py     the learning engine writes its own rules as Python (V4.26)
+core/brain.py       the self-learning AI brain (V4.25) — honest probabilities, one convention per file (V4.27)
+core/codegen.py     the learning engine writes its own rules as Python (V4.26) — one tight rule per look (V4.27)
 core/memory.py      alt texts and readings people gave, used again (V4.26)
 core/inventory.py   everything in the PDF, and what no tag holds (V4.26)
 core/kb.py          the offline rule book (V4.26)
@@ -2382,3 +2383,90 @@ are there to look up the text itself.
 Checked: every test suite of V4.25 passes; the Default / Academain / Kriyadocs / Book tag trees of the
 corpus are identical to V4.24 (the learning only acts through the brain, which those profiles do not
 use); `tests/selflearn_test.py` runs the whole loop.
+
+
+**V4.27.0 — The self-learning measures itself honestly, keeps one convention per file and writes tighter rules.**
+
+V4.25 and V4.26 gave the tool a brain that learns from samples and from people's fixes. V4.27 improves how it
+*judges itself*, how it *decides inside one file* and how it *writes its rules*. No new option; a profile that does
+not use the brain is untouched.
+
+*1. Honest numbers (`core/brain.py`).*
+* **Cross-validation over files.** The model's accuracy used to be measured on one held-out fifth of the files —
+  with a handful of sample files that can be three files, and the number then says more about *which* three than
+  about the brain. Now (up to 12 000 examples) every file is held out exactly once, in up to 4 rounds, so the
+  accuracy, the precision / recall per tag and the macro-F1 are measured on **all** the examples; the same data
+  always gives the same rounds. A big database (over 12 000 examples) keeps one held-out fifth, so training never
+  takes longer there.
+* **Calibration.** A model trained for many rounds on few examples is too sure of itself; the brain weighs the
+  model's voice against the other sources, so "99 %" that is right 70 % of the time would outvote them for no
+  reason. The held-out predictions now fix one number — a *temperature* — that makes "78 % sure" mean right 78 %
+  of the time; it is saved **inside the model** (a model saved by V4.26 loads with temperature 1, nothing to
+  convert) and used by the brain, the editor's popover and Think again. On synthetic noisy data the calibration
+  error (ECE) fell by a quarter to two thirds (e.g. 8.8 % → 3.1 %). Admin → 🧠 AI Brain → *Model accuracy* shows the rounds and
+  the calibration error; `python cli.py --brain-status` prints them with the temperature and the log-loss.
+* **Recent examples count a little more.** A client's style moves on; an example's weight falls from 1.0 (today)
+  towards 0.6 with a half-life of a year — never to nothing.
+* **Trust forgets.** The trust of a source (rules, samples, model, style, wording, code, AI) used to be the share
+  right over its whole life. It now counts about its **last 600 decisions**: when a count passes the window, old and
+  new are scaled back together, so a source that has got better is no longer held back by what it got wrong long ago.
+
+*2. One file, one convention (`layout_voices`, a new source "the same look in this file").* A document keeps its
+conventions: the bold 14 pt lines are all section heads, or none of them is. Every tag was decided on its own text,
+place and what the samples say. Now the verdicts the learned sources are **sure of** (the brain's own bar: enough
+share, enough sources agreeing) are pooled over the tags of the *same look* in the file — font, size, weight,
+capitals — leaving the tag's own out, and heard as one more voice:
+* a tag with **moderate** evidence follows the sure ones (a file whose heads all look alike is no longer tagged
+  half and half because half of them have unusual words);
+* **unsure verdicts are not shared**, and a look needs at least three sure others before it speaks;
+* the voice is **as loud as the look is consistent**: silent when the sure others split (65 % and less), in full
+  when they agree (95 % and more); only four or more sure others that agree 80 % count as an agreeing source;
+* it is recorded with the other opinions, so its trust is learned like everyone else's (Admin → *Whom the brain
+  trusts*, "The same look in this file"); notes read “brain: 62 % — model, layout”.
+In a simulation of the decision rule (sources 55–90 % accurate, looks 60–97 % consistent, 40 files each) pooling
+changed the accuracy by between −0.1 and +0.8 points — never a real loss where looks are mixed, a gain where they
+are consistent. (A simulation, not your files: the numbers say the rule is safe, not what it gains on your work.)
+* **Same look, same level.** A heading the brain made, and was not sure of its level (< 85 %), takes the level the
+  file already gives the others of that look when at least three headings of it agree (≥ 75 %): no H2 here and H3
+  there for the very same type style.
+* **Check these first.** Editor → Client tab: the doubtful tags, ordered by what their answer teaches (doubt × how
+  many other tags look the same); a click selects the tag on the page, and a fix there offers the others (“Make all
+  N …”, V4.26).
+
+*3. Learned code that is tighter and seen to work (`core/codegen.py`).*
+* **One rule for each look.** When the fixes of one kind come in several looks — the chapter titles *and* the section
+  heads of a book both become H2, in a bold slab serif and in plain capitals — V4.26 wrote one broad rule that
+  stretched over everything between them (“size 0.94–1.89 ×, at most 5 words” matches every short line). Now each
+  look (font, weight, capitals) gets a rule of its own, as tight as its own fixes (“font == rockwell, bold, size
+  1.71–1.89 ×…”). The fixes of the other looks are left out of its tests; a broad rule written by an older version is
+  **retired** when the narrower ones replace it (*Admin → Learned code* says so).
+* **Seen to work beyond one place.** A rule is switched on only when its fixes come from **two files** (or ten in one
+  file) and in **no file where it fires three times or more is it right less than 75 %** of the time — precision on
+  average can hide a file where the rule is plain wrong. A rule that waits says why in its *note* (“learned from one
+  file only — waits for a second file”); the table shows how many files it was learned from. A rule that is already
+  on and unchanged keeps working — the new checks are for new rules.
+
+*4. Memory.* When two files describe the same picture (or read the same text) differently, the description people
+**confirmed last** wins — not the one written most often; a confirmed one still beats a newer unconfirmed one, and the
+client's own memory still comes first.
+
+*5. It does not forget the last fixes.* A training asked for within ten minutes of the last one was *dropped*; the
+fixes made in the last minutes of an editing session were learned only if somebody fixed or built something after the
+pause. Now one training is made when the pause is over (it does nothing when there is nothing new). The editor's
+popover keeps the brain's context while nothing new was learned (it took a couple of seconds for every tag you
+clicked on a big database).
+
+New columns (added by themselves, in **⤓ Database backup**): `brain_models` — `logloss`, `ece`, `temperature`,
+`folds`; `code_rules` — `files`, `min_file_precision`. `python -m core.brain train` prints the calibration.
+
+*Honest limits.* Calibration is fitted and measured on the same held-out predictions (one number is fitted, so the
+optimism is small, but it is not a separate test set). The "same look" voice is only as good as the verdicts it
+pools, and a look that is a heading in one place and a label in another is deliberately silent. Recency weights and
+the 600-decision window are heuristics, not fitted. Waiting for a second file can delay a good rule by one file.
+Reading order, tables, lists and figures are still decided by the analysis and its AI checks, as before.
+
+Checked: every test suite that runs without a server passes — the 45 of V4.26 as they were, and the new
+`tests/selfimprove_test.py` (calibration, cross-validation, recency, the trust window, the layout voice with and
+without it on the same file, levels, the review order, one rule for each look, the one-file and wrong-in-one-file
+checks, newest memory, an older database, the delayed training); `api_test.py` and `ui_test.py` run through against
+a running server, and the new Client-tab list and the admin numbers were rendered in a browser.

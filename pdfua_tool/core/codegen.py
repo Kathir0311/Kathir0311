@@ -46,6 +46,17 @@ How a rule is made, checked and used:
 
 The code lives in the sample database (and, for reading, as .py files in
 sample_files/learned_code/), so it survives updates and is in the backup.
+
+V4.27:
+
+* one kind of fix in several looks (the chapter titles and the section heads of a
+  book are both H2, in two fonts) gets **one tight rule for each look** instead of
+  one broad rule that stretches over everything between them; a broad rule written
+  by an older version is retired when it is replaced
+* a rule is switched on only when it has been **seen to work beyond one place**:
+  fixes from two files (or ten in one), and in no file where it fires three times
+  or more right less than 75 % of the time. What waits says why (`note`); a rule
+  that is already on and unchanged keeps working.
 """
 from __future__ import annotations
 
@@ -83,10 +94,22 @@ TARGETS = L.SWAP | {"Artifact"}
 HEADINGS = L.HEADINGS
 ACTIVE_PRECISION = 0.93
 MIN_POSITIVES = 3
+# V4.27: a rule is switched on only when it has been seen to work beyond one place
+MIN_FILES = 2             # fixes from at least this many files …
+SOLO_POSITIVES = 10       # … or this many fixes in one file (a convention, not a slip)
+MIN_FILE_PRECISION = 0.75 # and in no file where it fires at least 3 times may it be right less often than this
+MAX_LOOKS = 4             # rules written for the different looks of one kind of fix
 
 
 def ensure(c: sqlite3.Connection) -> None:
     c.executescript(SCHEMA)
+    have = {r[1] for r in c.execute("PRAGMA table_info(code_rules)")}
+    for col in ("files INTEGER DEFAULT 0", "min_file_precision REAL"):      # V4.27: seen to work beyond one file
+        if col.split()[0] not in have:
+            try:
+                c.execute(f"ALTER TABLE code_rules ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
 
 
 def _now() -> str:
@@ -338,6 +361,7 @@ class Table:
         for k in STRINGS:
             self.col[k] = np.asarray([r[k] for r in rows], dtype=object)
         self.truth = np.asarray([r["_truth"] for r in rows], dtype=object)
+        self.src = np.asarray([r.get("_src", "") for r in rows], dtype=object)
         self.verified = np.asarray([int(r.get("_verified", 1)) for r in rows], dtype=bool)
         self._cache: dict[str, object] = {}
 
@@ -377,14 +401,20 @@ class Table:
         return m
 
 
-def _test(conds: list[dict], target: str, from_roles: set, fin: "Table", fix: "Table") -> dict:
-    """How a set of conditions does on everything the database holds."""
+def _test(conds: list[dict], target: str, from_roles: set, fin: "Table", fix: "Table",
+          only=None) -> dict:
+    """How a set of conditions does on everything the database holds.
+
+    `only` (V4.27): a mask over the fixes — the positives of one look. The fixes of the same kind
+    that belong to another look are then neither right nor wrong for this rule: they are left out."""
     np = fin.np
     mf = fin.all(conds) if fin.n else np.zeros(0, dtype=bool)
     mx = fix.all(conds) if fix.n else np.zeros(0, dtype=bool)
     from_m = np.isin(fix.col["role"], list(from_roles)) if fix.n else np.zeros(0, dtype=bool)
     is_t = fix.truth == target if fix.n else np.zeros(0, dtype=bool)
     pos = from_m & is_t
+    if only is not None and fix.n:
+        pos = pos & only
     hit_pos = mx & pos
     hit_bad_fix = mx & from_m & ~is_t
     hit_fin = int(mf.sum())
@@ -440,7 +470,7 @@ def _candidates(pos: list[dict]) -> list[dict]:
 
 
 def induce(target: str, from_roles: set, pos: list[dict], fin: "Table", fix: "Table",
-           must: list[dict] | None = None) -> tuple[list[dict], dict] | None:
+           must: list[dict] | None = None, only=None) -> tuple[list[dict], dict] | None:
     """Sequential covering, greedy: add the condition that makes the rule
     most precise while it still explains ≥ 75 % of the fixes."""
     cands = _candidates(pos)
@@ -448,13 +478,13 @@ def induce(target: str, from_roles: set, pos: list[dict], fin: "Table", fix: "Ta
 
     def greedy(pool):
         chosen = list(must or [])
-        best = _test(chosen, target, from_roles, fin, fix) if chosen else {"precision": 0.0}
+        best = _test(chosen, target, from_roles, fin, fix, only) if chosen else {"precision": 0.0}
         for _ in range(7):
             top = None
             for c_ in pool:
                 if c_ in chosen:
                     continue
-                r = _test(chosen + [c_], target, from_roles, fin, fix)
+                r = _test(chosen + [c_], target, from_roles, fin, fix, only)
                 if r["covered"] < need_cover:
                     continue
                 # as precise as possible; then explaining the most fixes; then the
@@ -488,14 +518,14 @@ def induce(target: str, from_roles: set, pos: list[dict], fin: "Table", fix: "Ta
     for c_ in cands:
         if c_ in chosen or c_["f"] not in keep:
             continue
-        r = _test(chosen + [c_], target, from_roles, fin, fix)
+        r = _test(chosen + [c_], target, from_roles, fin, fix, only)
         if r["covered"] >= best["covered"] and r["precision"] >= best["precision"] - 0.001:
             chosen.append(c_)
             best = r
     # a heading is never long (PDF/UA, and the brain's own guard rails)
     if target in HEADINGS and not any(c_["f"] == "words" for c_ in chosen):
         chosen.append({"f": "words", "op": "<=", "v": 22})
-        best = _test(chosen, target, from_roles, fin, fix)
+        best = _test(chosen, target, from_roles, fin, fix, only)
     return chosen, best
 
 
@@ -511,6 +541,75 @@ def agrees(source: str, conds: list[dict], tables: list["Table"], sample: int = 
             if run(rule, t.rows[i]) != bool(m[i]):
                 return False
     return True
+
+
+def per_file(conds: list[dict], target: str, from_roles: set, fin: "Table", fix: "Table", only=None) -> dict:
+    """How a set of conditions does in each file it fires in: {file: [right, fired]} (V4.27).
+
+    The overall precision can hide a file where the rule is plain wrong (100 % in a
+    book with twenty fixes, 0 % in the leaflet with three)."""
+    out: dict = collections.defaultdict(lambda: [0, 0])
+    np = fix.np
+    if fix.n:
+        hit = fix.all(conds) & np.isin(fix.col["role"], list(from_roles))
+        if only is not None:                      # the fixes of another look are not this rule's business
+            hit = hit & (only | (fix.truth != target))
+        good = hit & (fix.truth == target)
+        for src, g in zip(fix.src[hit], good[hit]):
+            out[src][1] += 1
+            out[src][0] += int(g)
+    if fin.n:
+        hit = fin.all(conds)
+        good = hit & (fin.truth == target) if target != "Artifact" else np.zeros(fin.n, dtype=bool)
+        for src, g in zip(fin.src[hit], good[hit]):
+            out[src][1] += 1
+            out[src][0] += int(g)
+    return dict(out)
+
+
+def file_stats(pf: dict) -> tuple[int, float | None]:
+    """(files where it fired rightly at least once, its worst precision in a file it fired in 3+ times)."""
+    files = sum(1 for g, n in pf.values() if g >= 1)
+    ratios = [g / n for g, n in pf.values() if n >= 3]
+    return files, (round(min(ratios), 4) if ratios else None)
+
+
+def waits_for(res: dict, extra: dict) -> str:
+    """'' when a rule has been seen to work beyond one place; else why it stays a candidate."""
+    mfp = extra.get("min_file_precision")
+    if mfp is not None and mfp < MIN_FILE_PRECISION:
+        return f"wrong too often in one of its files ({round(mfp * 100)} % right there)"
+    if int(extra.get("files") or 0) < MIN_FILES and res["covered"] < SOLO_POSITIVES:
+        return f"learned from one file only — waits for a second file (or {SOLO_POSITIVES} fixes)"
+    return ""
+
+
+def look_clusters(pos: list[dict]) -> list[tuple[str, list[dict]]]:
+    """The fixes of one kind, grouped by how the fixed tags look: [(look key, fixes)] (V4.27).
+
+    One kind of fix can come in several looks — the chapter titles *and* the section heads of a
+    book both become H2, one in a bold slab serif, the other in plain capitals. A single rule
+    would have to stretch over everything between the two (a size range from 0.9× to 1.9× takes in
+    every short line of the book), so each look — font, weight, capitals — gets a rule of its own,
+    as tight as its own fixes. The key does not depend on the sizes, so the same fixes always give
+    the same key and the rule keeps its slot when the engine writes it again."""
+    buckets: dict = collections.defaultdict(list)
+    for x in pos:
+        buckets[(x["font"] or "", int(x["bold"]), 1 if x["caps"] >= 0.8 else 0)].append(x)
+    out = []
+    for (font, bold, caps), members in sorted(buckets.items(), key=lambda t: (-len(t[1]), t[0])):
+        if len(members) >= MIN_POSITIVES:
+            out.append((f"{font or '*'}/{'b' if bold else 'r'}{'C' if caps else ''}", members))
+    return out[:MAX_LOOKS]
+
+
+def supersede(c, slot: str, by: list[str]) -> bool:
+    """A broad rule written before its fixes were seen to come in several looks is replaced by the
+    narrower rules of each look (unless a person already switched it off)."""
+    cur = c.execute("UPDATE code_rules SET status='retired', note=?, updated=? WHERE slot=? AND status IN "
+                    "('active', 'candidate')", ("replaced by narrower rules for each look: " + ", ".join(by),
+                                               _now(), slot))
+    return bool(cur.rowcount)
 
 
 # ================================================================ the store
@@ -542,19 +641,29 @@ def _export(rule_id: str, source: str | None) -> None:
 
 
 def _save(c, slot: str, target: str, from_roles: list[str], client: str, conds: list[dict], res: dict,
-          origin: str) -> tuple[str, str]:
+          origin: str, extra: dict | None = None) -> tuple[str, str]:
+    extra = extra or {}
     old = c.execute("SELECT * FROM code_rules WHERE slot=?", (slot,)).fetchone()
-    status = "active" if (res["precision"] >= ACTIVE_PRECISION and res["verified_matched"] >= 5
-                          and res["covered"] >= MIN_POSITIVES) else "candidate"
+    same_conds = old is not None and json.loads(old["conditions"] or "[]") == conds
+    good = (res["precision"] >= ACTIVE_PRECISION and res["verified_matched"] >= 5 and res["covered"] >= MIN_POSITIVES)
+    why = waits_for(res, extra) if good else ""
+    # V4.27: a rule that is already on and unchanged keeps working (the new checks are for new rules)
+    status = "active" if (good and (not why or (same_conds and old["status"] == "active"))) else "candidate"
+    note = why if (good and status == "candidate") else ""
     if old is not None and old["status"] in ("disabled", "retired"):
         status = old["status"]                               # a person or the outcome said no — stays so
+        note = old["note"] or ""
     meta = {"positives": res["covered"], "verified_pos": res["verified_pos"], "matched": res["matched"],
             "precision": res["precision"], "origin": origin}
+    files, mfp = int(extra.get("files") or 0), extra.get("min_file_precision")
     if old is not None:
-        if json.loads(old["conditions"] or "[]") == conds and old["status"] == status:
+        if same_conds and old["status"] == status:
+            # (a rule that is on keeps its note — "set by the admin"; a candidate says what it waits for)
+            keep = note if status == "candidate" else (old["note"] or "")
             c.execute("UPDATE code_rules SET positives=?, verified_pos=?, matched=?, verified_matched=?, precision=?, "
-                      "updated=? WHERE id=?", (res["covered"], res["verified_pos"], res["matched"],
-                                               res["verified_matched"], res["precision"], _now(), old["id"]))
+                      "updated=?, files=?, min_file_precision=?, note=? WHERE id=?",
+                      (res["covered"], res["verified_pos"], res["matched"], res["verified_matched"], res["precision"],
+                       _now(), files, mfp, keep, old["id"]))
             return old["id"], "same"
         rid, ver = old["id"], int(old["version"] or 1) + 1
     else:
@@ -565,12 +674,44 @@ def _save(c, slot: str, target: str, from_roles: list[str], client: str, conds: 
     desc = ", ".join(describe(x) for x in conds)
     row = (rid, slot, ver, old["created"] if old is not None else _now(), _now(), status, target, json.dumps(from_roles),
            client, json.dumps(conds), src, rule["sha"], origin, res["covered"], res["verified_pos"], res["matched"],
-           res["verified_matched"], res["precision"], desc, "")
+           res["verified_matched"], res["precision"], desc, note, files, mfp)
     c.execute("INSERT OR REPLACE INTO code_rules (id, slot, version, created, updated, status, target, from_roles, "
               "client, conditions, source, sha, origin, positives, verified_pos, matched, verified_matched, precision, "
-              "description, note) VALUES (" + ",".join("?" * 20) + ")", row)
+              "description, note, files, min_file_precision) VALUES (" + ",".join("?" * 22) + ")", row)
     _export(rid, src)
     return rid, "new" if old is None else "updated"
+
+
+def _mine(c, slot: str, target: str, from_roles: list[str], client: str, pos: list[dict], finished: list[dict],
+          fin: "Table", fix: "Table", must: list[dict], ai_cfg, out: dict, allow_ai: bool = True,
+          only_these: bool = False):
+    """Find, write, check and store the rule for one set of fixes.
+    `only_these`: `pos` is one look of a kind of fix — the other looks are left out of its tests.
+    -> None, or (rule id, how, the compiled rule)."""
+    only = None
+    if only_these and fix.n:
+        ids = {id(x) for x in pos}
+        only = fix.np.asarray([id(r) in ids for r in fix.rows], dtype=bool)
+    res = induce(target, set(from_roles), pos, fin, fix, must, only)
+    origin = "induction"
+    if allow_ai and (res is None or res[1]["precision"] < 0.9) and ai_cfg is not None \
+            and getattr(ai_cfg, "enabled", False):
+        ai = _ask_ai(ai_cfg, target, from_roles, client, pos, finished)
+        if ai:
+            r2 = _test(must + ai, target, set(from_roles), fin, fix, only)
+            if r2["covered"] >= MIN_POSITIVES and (res is None or r2["precision"] > res[1]["precision"]):
+                res, origin = (must + ai, r2), "ai"
+                out["ai"] += 1
+    if res is None or res[1]["precision"] < 0.9:
+        return None
+    conds, r = res
+    src = write_source("R0000", target, from_roles, client, conds, {"precision": r["precision"]})
+    if not agrees(src, conds, [fin, fix]):
+        return None                                # never: the writer and the test disagree
+    files, mfp = file_stats(per_file(conds, target, set(from_roles), fin, fix, only))
+    rid, how = _save(c, slot, target, from_roles, client, conds, r, origin,
+                     {"files": files, "min_file_precision": mfp})
+    return rid, how, compile_rule(src)
 
 
 def synthesize(ai_cfg=None, progress=None) -> dict:
@@ -583,7 +724,7 @@ def synthesize(ai_cfg=None, progress=None) -> dict:
     except Exception:
         return {"ok": False, "error": "numpy is not installed"}
     c = _connect()
-    out = {"ok": True, "new": 0, "updated": 0, "same": 0, "tried": 0, "failed": 0, "ai": 0, "rules": []}
+    out = {"ok": True, "new": 0, "updated": 0, "same": 0, "tried": 0, "failed": 0, "ai": 0, "rules": [], "looks": 0}
     try:
         finished, fixes = _examples(c)
         fin_all, fix_all = Table(finished), Table(fixes)
@@ -611,27 +752,32 @@ def synthesize(ai_cfg=None, progress=None) -> dict:
                 fin, fix = by_client_fin[client], by_client_fix[client]
             else:
                 fin, fix = fin_all, fix_all
-            res = induce(target, set(from_roles), pos, fin, fix, must)
-            origin = "induction"
-            if (res is None or res[1]["precision"] < 0.9) and ai_cfg is not None and getattr(ai_cfg, "enabled", False):
-                ai = _ask_ai(ai_cfg, target, from_roles, client, pos, finished)
-                if ai:
-                    r2 = _test(must + ai, target, set(from_roles), fin, fix)
-                    if r2["covered"] >= MIN_POSITIVES and (res is None or r2["precision"] > res[1]["precision"]):
-                        res, origin = (must + ai, r2), "ai"
-                        out["ai"] += 1
-            if res is None or res[1]["precision"] < 0.9:
-                out["failed"] += 1
-                continue
-            conds, r = res
             slot = f"{target}|{','.join(from_roles)}|{client}"
-            src = write_source("R0000", target, from_roles, client, conds, {"precision": r["precision"]})
-            if not agrees(src, conds, [fin, fix]):
-                out["failed"] += 1                # never: the writer and the test disagree
-                continue
-            rid, how = _save(c, slot, target, from_roles, client, conds, r, origin)
-            out[how] = out.get(how, 0) + 1
-            out["rules"].append(rid)
+            # V4.27: fixes of one kind that come in several looks — one tight rule for each look
+            looks = look_clusters(pos)
+            made = 0
+            if len(looks) >= 2:
+                ids = []
+                for look, members in looks:
+                    sub = _mine(c, f"{slot}|{look}", target, sorted({x["role"] for x in members if x["role"]}),
+                                client, members, finished, fin, fix, must, ai_cfg, out, allow_ai=False,
+                                only_these=True)
+                    if sub is not None:
+                        out[sub[1]] = out.get(sub[1], 0) + 1
+                        out["rules"].append(sub[0])
+                        out["looks"] += 1
+                        ids.append(sub[0])
+                        made += 1
+                if made:
+                    supersede(c, slot, ids)
+            if not made:
+                got = _mine(c, slot, target, from_roles, client, pos, finished, fin, fix, must, ai_cfg, out)
+                if got is not None:
+                    out[got[1]] = out.get(got[1], 0) + 1
+                    out["rules"].append(got[0])
+                    made += 1
+            if not made:
+                out["failed"] += 1
         c.commit()
         retire(c)
         c.commit()

@@ -85,6 +85,10 @@ def main(argv=None) -> int:
         print(f"model: {('#' + str(m.get('id'))) if m else 'not trained'}"
               + (f" · {m.get('n_train')} examples from {m.get('n_samples')} file(s) · accuracy "
                  f"{round((m.get('accuracy') or 0) * 100)} % (chance {round((m.get('baseline') or 0) * 100)} %)" if m else ""))
+        if m and m.get("temperature"):                 # V4.27: how honest its probabilities are
+            print(f"  measured by {m.get('folds') or 1} held-out round(s) over files · probabilities calibrated "
+                  f"(temperature {m['temperature']}, calibration error {round((m.get('ece') or 0) * 100, 1)} %, "
+                  f"log-loss {m.get('logloss')})")
         c = s.get("curve") or {}
         if c:
             print(f"right first time: {c.get('first')} % → {c.get('last')} % over {c.get('files')} approved file(s)")

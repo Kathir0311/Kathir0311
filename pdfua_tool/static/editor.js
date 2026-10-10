@@ -1114,7 +1114,7 @@
       r.wording ? el('span', { class: 'tiny muted', text: ` · this wording: ${r.wording.role} (${r.wording.n}×)` }) : '');
     const br = r.brain || {};
     if ((br.brain || []).length) {
-      const names = { rules: 'rules', samples: 'samples', model: 'model', style: 'style', wording: 'wording', code: 'learned code', ai: 'AI' };
+      const names = { rules: 'rules', samples: 'samples', model: 'model', style: 'style', wording: 'wording', code: 'learned code', layout: 'same look in the file', ai: 'AI' };
       const src = Object.entries(br.sources || {}).map(([k, v]) => `${names[k] || k} ${v[0]}`).join(' · ');
       box.append(el('span', { class: 'brsrc tiny muted' }, el('b', { text: '🧠 Brain: ' }),
         br.brain.slice(0, 3).map((v) => `${v.role} ${Math.round(v.share * 100)}%`).join(' · ') + (src ? ` — ${src}` : '')));
@@ -2129,6 +2129,16 @@
       el('div', { class: 'spacer' }), btn));
     if (facts.length) box.append(el('div', { class: 'bfacts' }, ...facts));
     if (sim) box.append(el('div', { class: 'tiny muted', style: 'margin-top:6px', text: 'Learned most from: ' + sim }));
+    const rev = (info.review_first || []).filter((x) => x.id);
+    if (rev.length) {
+      // V4.27: the doubtful tags to look at first — the answer to one settles the others that look the same
+      box.append(el('div', { class: 'tiny muted', style: 'margin-top:8px',
+        text: 'Check these first — one answer settles the others that look the same:' }));
+      box.append(el('div', { class: 'revlist' }, ...rev.map((x) => el('button', { class: 'sm revitem', type: 'button',
+        title: `${x.role} · ${Math.round((x.confidence || 0) * 100)} % sure${x.same_look ? ` · ${x.same_look} more look the same` : ''}`,
+        text: `p${(x.page || 0) + 1} \u201c${x.text}\u201d${x.same_look ? ` \u00d7${x.same_look + 1}` : ''}`,
+        onclick: () => selectOnly(x.id, true) }))));
+    }
     if (!info.version) box.append(el('div', { class: 'tiny muted', style: 'margin-top:6px',
       text: b.on ? 'The brain has not looked at this file yet — press Think again.'
         : 'This file\u2019s profile does not use the AI brain. Press Think again, or pick “Smart AI (all samples)” in the profile chip.' }));
