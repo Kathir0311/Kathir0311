@@ -8,7 +8,7 @@
 * sign in: a wrong password is told (and the form shakes), the right one opens the files; the password can be
   shown; Caps Lock is told; the user name is remembered, the password never
 * Dez AI is introduced
-* V4.32 — more of what the studio can do: why clients choose it, how Ollama teaches Dez AI, every kind of content, the
+* V4.32 — more of what the studio can do: why clients choose it, how the Online AI teaches Dez AI, every kind of content, the
   screen-reader preview, the standards (the checks tick, the bars fill), the delivery, how the work changes, the
   questions; the numbers it quotes are the tool's own; every part works with the keyboard, with the pause button and
   with the computer's "less motion"; a narrow screen has no sideways scroll
@@ -140,7 +140,7 @@ def main() -> int:
         time.sleep(1.0)
         ok(pg.locator(".dz-adv li").count() == 6 and pg.locator(".dz-adv li h3").count() == 6, "why clients choose it: six reasons")
         ok(pg.locator(".dz-adv .pf").count() == 6, "…each with its proof")
-        # Ollama teaches Dez AI: the story moves, the numbers grow
+        # the Online AI teaches Dez AI: the story moves, the numbers grow
         pg.evaluate("document.querySelector('#teacher').scrollIntoView()")
         seen_q, best = set(), 0
         t0 = time.time()

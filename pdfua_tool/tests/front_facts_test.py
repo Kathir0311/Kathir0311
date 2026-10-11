@@ -14,6 +14,8 @@ No server and no browser needed (the browser half is tests/ui_front_test.py).
   no id twice, every aria-labelledby finds its heading, a real table with caption and headers, no handler written into the
   HTML, nothing loaded from another server; every id the page's script looks for is in the page
 * nothing a page like this should not say without proof: no testimonials, logos of others, certificates or guarantees
+* (V4.32.1) the model service the studio asks is called only "the Online AI" on the page — no product name in the page, its
+  error variant, its script or its style — and the first thing the page says about it is where it runs: on your own network
 """
 from __future__ import annotations
 
@@ -209,6 +211,19 @@ def main() -> int:
     ok("not a conformance certificate" in low, "the page says what a machine check is not")
     ok(low.count("certif") <= 5, f"'certified' only where the page says it is not ({low.count('certif')}x)")
     ok(pg.count.get("img", 0) == 0 or "alt=" in src, "pictures (if any) have alt text")
+
+    # ------------------------------------------------------------------ the model service has no product name on the front page
+    served = {"the page": src, "the page with an error": bad_login.get_data(as_text=True), "landing.js": js, "landing.css": css, "style.css": read("static", "style.css")}
+    for what, txt in served.items():
+        ok(not re.search(r"ollama", txt, re.I), f"{what} names no product of the model service ({len(re.findall('ollama', txt, re.I))}x)")
+    mentions = [m.start() for m in re.finditer(r"Online AI", body)]
+    ok(len(mentions) >= 10, f"the page speaks of the Online AI ({len(mentions)}x)")
+    ok(mentions and "own network" in body[mentions[0]:mentions[0] + 120], f"the first thing it says about the Online AI is where it runs: {body[mentions[0]:mentions[0] + 120]!r}" if mentions else "no mention")
+    for at in mentions:                                            # and never that it is a service in the cloud or on the internet
+        near = body[at:at + 70]
+        near = re.sub(r"no cloud service|nothing from the internet|without the internet", "", near)
+        ok(not re.search(r"cloud|internet", near), f"the Online AI is not put in the cloud: {near!r}")
+    ok("Online AI teaches." in body and "<b>Online AI</b><small>the teacher</small>" in src, "the story's heading and its teacher say Online AI")
 
     # ------------------------------------------------------------------ before → after: measured here, again
     rows = re.findall(r'<span class="nm">(.*?)</span><span class="bar" style="--b:(\d+)%;--a:(\d+)%">.*?<s>(\d+)</s> → <b>(\d+)</b>', src, re.S)

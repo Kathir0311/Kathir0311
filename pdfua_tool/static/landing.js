@@ -371,7 +371,7 @@
     loop();
   })();
 
-  /* ------------------------------------------------------------------ V4.32: Ollama teaches Dez AI — the lessons story */
+  /* ------------------------------------------------------------------ V4.32: the Online AI teaches Dez AI — the lessons story */
   (function lessons() {
     const box = $('#dzLessons');
     if (!box) return;

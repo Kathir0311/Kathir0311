@@ -1,4 +1,4 @@
-# Dezquare PDF Accessibility Studio v4.32.0
+# Dezquare PDF Accessibility Studio v4.32.1
 
 Automated PDF/UA-1 tagging plus an Acrobat-style manual tag editor.
 
@@ -1387,7 +1387,7 @@ python tests/worktime_test.py          # V4.30.0 working time: only active secon
 python tests/rights_test.py            # V4.30.0 rights: role defaults, Allow / Deny, refused on the server with the reason, see all, take over, who spent the time
 python app.py & python tests/ui_admin_test.py    # V4.30.0 Admin in a browser: filters and chips, Reset, views kept, the working time, the Rights dialog, Time, Workflow, Activity
 python app.py & python tests/ui_users_test.py    # V4.30.0 the Users page: filters, chips and Reset, rows kept between draws, 150 rows at a time, the upload chips, the person's time
-python tests/front_facts_test.py     # V4.32.0 the front page tells only what the tool can show: its numbers are counted in the tool, the before → after table is measured again, nothing leaves the network, the page is built as the PDFs it asks for
+python tests/front_facts_test.py     # V4.32.0 the front page tells only what the tool can show: its numbers are counted in the tool, the before → after table is measured again, nothing leaves the network, the page is built as the PDFs it asks for (V4.32.1: no product name of the model service on the page)
 python tests/teacher_test.py           # V4.31.0 Ollama teaches Dez AI: lessons, answers alone, proven students and audits, people outrank the teacher, Ollama off, the Admin API
 python app.py & python tests/ui_teacher_test.py   # V4.31.0 Admin → Dez AI → Ollama teaches Dez AI in a browser: the card, Study now, levels, switches, lessons, forget
 python app.py & python tests/ui_zone_test.py     # V4.28.0 a zone cut by hand → the offer “Cut all N”, Admin → System and Dez AI
@@ -2874,7 +2874,7 @@ opened and forgotten).
 The sign-in page is what a client sees first, so it now answers the questions a client asks before they start: *why this studio, what
 exactly does it do, how sure can we be, what do we get, what does it cost us in time, where do our files go?* Each answer is a part of
 the page, in this order: the sign-in and the demo → **Why clients choose us** → Dez AI and the zone story → **Ollama teaches, Dez AI
-remembers** → the numbers → the features → **every kind of content** → **the screen-reader preview** → **the standards** → **what
+remembers** (V4.32.1: the page says “Online AI”) → the numbers → the features → **every kind of content** → **the screen-reader preview** → **the standards** → **what
 lands on your client's desk** → how it works → the teams → **what changes** (a table) → privacy → **the questions clients ask** →
 a last call. The menu has eight entries and lights the part on the screen; a thin bar shows how far down the page you are, and a
 button takes you back up.
@@ -2884,7 +2884,7 @@ button takes you back up.
   person) · fast for one, fair for many (300 pages in under a minute on a multi-core server; the queue serves each person in turn) ·
   your files never leave (the guard refuses every connection outside the network, and logs it) · it learns each client's house style
   · proof for the client (the PDF, the Excel report, the history of who did what and for how long).
-* **Ollama teaches. Dez AI remembers.** A small story that moves when it is scrolled to: a question goes to Ollama, the answer comes
+* **Ollama teaches. Dez AI remembers.** (V4.32.1: **Online AI teaches. Dez AI remembers.**) A small story that moves when it is scrolled to: a question goes to Ollama, the answer comes
   back and travels to Dez AI as a lesson, the share of questions Dez AI answers alone climbs (0 → 78 %), the lessons kept and the
   waiting time saved grow. Beside it: *proven, not trusted* (a student answers alone only after it agrees with its teacher on questions
   it has not seen, and is checked now and then) · *people outrank both* · *your studio's own words* (the examples Dez AI shows the
@@ -2928,3 +2928,24 @@ loaded from another server, every id the script looks for is on the page; no tes
 `tests/ui_front_test.py` (in a browser: the six reasons, the teacher's story moving and growing, the preview reading line after line and
 lighting its block, the checks ticking and the bars filling, the table, the questions — one open at a time, also by keyboard — the
 progress bar and the way back up, paused and with less motion: everything shown as it ends, a phone: nothing wider than the screen).
+
+
+---
+
+**V4.32.1 — The front page calls the model service “the Online AI”.**
+
+On the sign-in page the AI model service that Dez AI asks and learns from (the Ollama server of Admin → Settings → AI) is now named
+only **“the Online AI”** — in the page, in the page with a wrong-password message, in `landing.js` and in `landing.css` (the
+comments are served too). Admin, the editor, the command line and this README keep the real name; nothing but the front page changed.
+
+* **Where it appears:** the heading **“Online AI teaches. Dez AI remembers.”** and the teacher in its little story, “Meet Dez AI” (taught
+  by the Online AI, drafts alt text from the Online AI's vision model), the reading-order chip, the table of what changes, the privacy
+  list and three of the questions (what do we need to run it — is a GPU required; do my files leave my server).
+* **Said plainly where it runs.** “Online” must not be read as “in the cloud”, which would contradict what the page promises, so the
+  first thing the page says about it is that **it runs on your own network** (“Dez AI and the Online AI that teaches it both run on your
+  own network”), every mention of it stays clear of “cloud” and “internet”, and the question *Do my files leave my server?* adds the
+  limit the guard really has: every connection outside the network is refused — and **if the Online AI should live elsewhere, the admin has
+  to name that host in the Privacy guard first** (Admin → Privacy guard).
+* `tests/front_facts_test.py` keeps it so: no product name of the model service in the page, its error variant, its script or its
+  style (including `style.css`, which the page loads), the Online AI spoken of at least ten times, the first mention saying where it
+  runs, and none of its mentions putting it in the cloud or on the internet.

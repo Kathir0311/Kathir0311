@@ -424,7 +424,7 @@ html.dz-still .js .reveal{opacity:1;transform:none;transition:none}
 
 /* ===========================================================================
    V4.32 — more of what the studio can do, for the people who decide whether to use it:
-   why clients choose it · how Ollama teaches Dez AI · every kind of content · the screen-reader preview ·
+   why clients choose it · how the Online AI teaches Dez AI · every kind of content · the screen-reader preview ·
    the standards, before and after · the delivery · how the work changes · the questions clients ask.
    =========================================================================== */
 .dz-progress{position:fixed;left:0;top:0;height:3px;width:100%;z-index:70;background:var(--dz-fill);transform:scaleX(0);transform-origin:left;pointer-events:none}
@@ -448,7 +448,7 @@ html.dz-still .js .reveal{opacity:1;transform:none;transition:none}
   -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 7.4l2.2 2.2 4.8-5' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='7' cy='7' r='7'/%3E%3C/svg%3E") center/contain no-repeat;
   mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 7.4l2.2 2.2 4.8-5' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='7' cy='7' r='7'/%3E%3C/svg%3E") center/contain no-repeat}
 
-/* ------------------------------------------------------------ Ollama teaches Dez AI */
+/* ------------------------------------------------------------ the Online AI teaches Dez AI */
 .dz-teach{background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--dz-c) 7%,transparent) 30%,color-mix(in srgb,var(--dz-a) 6%,transparent) 80%,transparent)}
 .dz-teachgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:56px;align-items:center}
 .dz-teachtext .dz-ticks li b{color:var(--ink)}
