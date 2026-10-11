@@ -165,13 +165,35 @@ class DocModel:
 
     def siblings(self, nid: str) -> list[str]:
         n = self.nodes[nid]
-        return self.root_children if n.parent is None else self.nodes[n.parent].children
+        if n.parent is None or n.parent not in self.nodes:           # (a parent that is gone: the node hangs from the root)
+            return self.root_children
+        return self.nodes[n.parent].children
 
     def detach(self, nid: str) -> int:
+        """Take the node (with what hangs from it) out of the tree; its place is returned. Detaching what is already out of
+        the tree changes nothing and answers -1 — a cleanup that meets a node twice must never stop a build (V4.33)."""
         sib = self.siblings(nid)
-        i = sib.index(nid)
+        try:
+            i = sib.index(nid)
+        except ValueError:
+            return -1
         sib.pop(i)
         return i
+
+    def attached_ids(self) -> set[str]:
+        """The ids of the nodes that can be reached from the root: what the PDF will carry."""
+        out: set[str] = set()
+        stack = list(self.root_children)
+        while stack:
+            nid = stack.pop()
+            if nid in out:
+                continue
+            n = self.nodes.get(nid)
+            if n is None:
+                continue
+            out.add(nid)
+            stack.extend(n.children)
+        return out
 
     def absorb(self, target_id: str, nid: str) -> None:
         """Fold node `nid` into `target_id`: its boxes become extra zones of
@@ -199,13 +221,14 @@ class DocModel:
         if n is None:
             return
         sib = self.siblings(nid)
-        i = sib.index(nid)
-        sib.pop(i)
-        if promote_children:
+        i = self.detach(nid)
+        if promote_children and i >= 0:
+            par = n.parent if n.parent in self.nodes else None
             for k, cid in enumerate(n.children):
-                self.nodes[cid].parent = n.parent
-                sib.insert(i + k, cid)
-        else:
+                if cid in self.nodes:
+                    self.nodes[cid].parent = par
+                    sib.insert(i + k, cid)
+        else:                                          # (a node that was already out of the tree has nothing to promote into)
             for cid in list(n.children):
                 self._drop_subtree(cid)
         self.nodes.pop(nid, None)

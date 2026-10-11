@@ -430,7 +430,8 @@ def drop_duplicate_rows(model: DocModel, least: float = 0.85) -> int:
     cells can never be given any content — PAC then reports them as elements
     with nothing associated. The blank copy goes."""
     gone = 0
-    for tb in [n for n in model.nodes.values() if n.role == "Table"]:
+    live = model.attached_ids()                  # (only what is in the tree: a node out of it is not a row of anything)
+    for tb in [n for n in model.nodes.values() if n.role == "Table" and n.id in live]:
         rows = [model.nodes[c] for c in list(tb.children) if c in model.nodes]
         rows = [r for r in rows if r.role in ("TR", "THead", "TBody", "TFoot")]
         flat: list[StructNode] = []
@@ -458,16 +459,17 @@ def drop_duplicate_rows(model: DocModel, least: float = 0.85) -> int:
                       if c.role in ("TD", "TH") and not c.artifact and c.bbox
                       and c.page == tr.page and c.id not in own]
             if _cover(box, others) >= least:
-                model.detach(tr.id)
-                gone += 1
-    # a table left with no rows at all is the duplicate itself
-    for tb in [n for n in model.nodes.values() if n.role == "Table"]:
+                model.remove(tr.id, promote_children=False)       # out of the tree *and* out of the model: a later
+                gone += 1                                          # cleanup must not meet it a second time (V4.33)
+    # a table left with no rows at all is the duplicate itself (a caption or a note it held stays, where the table was)
+    live = model.attached_ids()
+    for tb in [n for n in model.nodes.values() if n.role == "Table" and n.id in live]:
         kids = [model.nodes[c] for c in tb.children if c in model.nodes]
         rows = [k for k in kids if k.role == "TR"]
         rows += [model.nodes[c] for k in kids if k.role in ("THead", "TBody", "TFoot")
                  for c in k.children if c in model.nodes and model.nodes[c].role == "TR"]
         if not rows:
-            model.detach(tb.id)
+            model.remove(tb.id, promote_children=True)
     if gone:
         model.info["duplicate_rows_dropped"] = gone
     return gone

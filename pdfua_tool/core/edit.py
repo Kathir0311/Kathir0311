@@ -950,6 +950,7 @@ def convert_table_columns(model: DocModel, tid: str, mode: str = "cells") -> dic
     old_children = list(t.children)
     for cid in old_children:
         model.detach(cid)
+    moved_ids: set[str] = set()                     # what now hangs from a new row: the old-children loop below must not hang it twice
     t.style = dict(t.style or {}, header_rows=0, header_cols=0)
     body = StructNode(id=model.new_id("tbody"), role="TBody", page=t.page, source="user")
     model.add(body, t.id)
@@ -959,6 +960,7 @@ def convert_table_columns(model: DocModel, tid: str, mode: str = "cells") -> dic
         model.add(hr, body.id)
         model.detach(h.id)
         model.add(h, hr.id)
+        moved_ids.add(h.id)
         if mode == "cells":
             h.colspan = max(1, width)
         h.scope = h.scope or "Column"
@@ -970,6 +972,7 @@ def convert_table_columns(model: DocModel, tid: str, mode: str = "cells") -> dic
                 n.role = "TD"
                 n.scope, n.headers = "", []
             model.add(n, wr.id)
+            moved_ids.add(n.id)
             wr.bbox = union(wr.bbox, n.bbox)
             made += 1
         if mode == "cells" and words:
@@ -987,9 +990,10 @@ def convert_table_columns(model: DocModel, tid: str, mode: str = "cells") -> dic
     for n in left_over:                                  # printed beside the headings
         model.detach(n.id)
         model.add(n, body.id)
+        moved_ids.add(n.id)
     for cid in old_children:          # the old rows and row groups, now empty
         n = model.nodes.get(cid)
-        if n is None:
+        if n is None or cid in moved_ids:
             continue
         keeps = [d for d in model.descendants(cid)
                  if (d.text or "").strip() or d.role in ("Figure", "Formula")]
@@ -2693,6 +2697,8 @@ def set_order(model: DocModel, nid: str, number: int) -> None:
         raise EditError("no such tag")
     x = model.nodes[nid]
     number = int(number)
+    if x.artifact or (x.parent is None and not is_block(model, x)):
+        raise EditError("an artifact is not read, so it has no reading position")
     if is_block(model, x):
         pool = [n for n in model.ordered_nodes() if is_block(model, n)]
     else:

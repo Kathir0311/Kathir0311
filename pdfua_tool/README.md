@@ -1,4 +1,4 @@
-# Dezquare PDF Accessibility Studio v4.32.1
+# Dezquare PDF Accessibility Studio v4.32.2
 
 Automated PDF/UA-1 tagging plus an Acrobat-style manual tag editor.
 
@@ -1387,6 +1387,7 @@ python tests/worktime_test.py          # V4.30.0 working time: only active secon
 python tests/rights_test.py            # V4.30.0 rights: role defaults, Allow / Deny, refused on the server with the reason, see all, take over, who spent the time
 python app.py & python tests/ui_admin_test.py    # V4.30.0 Admin in a browser: filters and chips, Reset, views kept, the working time, the Rights dialog, Time, Workflow, Activity
 python app.py & python tests/ui_users_test.py    # V4.30.0 the Users page: filters, chips and Reset, rows kept between draws, 150 rows at a time, the upload chips, the person's time
+python tests/model_integrity_test.py # V4.32.2 Build PDF never stops on a table or a row that is already gone; a fuzz of the editor's operations: after each one the tags are still a tree, and a file built from the result builds
 python tests/front_facts_test.py     # V4.32.0 the front page tells only what the tool can show: its numbers are counted in the tool, the before → after table is measured again, nothing leaves the network, the page is built as the PDFs it asks for (V4.32.1: no product name of the model service on the page)
 python tests/teacher_test.py           # V4.31.0 Ollama teaches Dez AI: lessons, answers alone, proven students and audits, people outrank the teacher, Ollama off, the Admin API
 python app.py & python tests/ui_teacher_test.py   # V4.31.0 Admin → Dez AI → Ollama teaches Dez AI in a browser: the card, Study now, levels, switches, lessons, forget
@@ -2949,3 +2950,36 @@ comments are served too). Admin, the editor, the command line and this README ke
 * `tests/front_facts_test.py` keeps it so: no product name of the model service in the page, its error variant, its script or its
   style (including `style.css`, which the page loads), the Online AI spoken of at least ten times, the first mention saying where it
   runs, and none of its mentions putting it in the cloud or on the internet.
+
+
+---
+
+**V4.32.2 — Build PDF no longer stops with “list.index(x): x not in list”.**
+
+*What was reported.* Build PDF ended with `The build failed. Your tags are unchanged` and, in the details,
+`ValueError: list.index(x): x not in list` — raised in `core/build.py` (`eff.detach(tb.id)`) through `core/model.py` (`detach`).
+
+*Why.* Two cleanups of the build both look for tables and rows that hold nothing, and both used `DocModel.detach`, which takes a
+tag out of the tree but leaves it in the model. `repair.drop_duplicate_rows` (run first) took a **table with no rows** out of the
+tree; the cleanup after the tagging (it runs when it has dropped at least one empty row) found the same table in the model, and
+detached it **a second time** — and `list.index` has nothing to find in a list that no longer holds it. It needs a table without rows
+(all its rows deleted by hand, or a zone that found none) *and* a row that nothing is printed in, so it showed in some files only.
+A blank row printed on top of a real one failed the same way, one line earlier.
+
+*What changed.*
+* `detach` is idempotent: a tag that is out of the tree already answers `-1` instead of raising (so does one whose parent is gone);
+  `remove` of such a tag takes it and what hangs from it out of the model; new `DocModel.attached_ids()`.
+* `drop_duplicate_rows` and the cleanup of the build look only at tags that are in the tree, and **take what they drop out of the
+  model too** (`remove`), so no later step can meet a dropped tag again. A **caption or a note held by a table with no rows stays**,
+  where the table was (before, it left the tree together with the table).
+* Found on the way, with a fuzz of the editor's operations: **“Group by headings”** (`convert_table_columns`) on a table whose
+  headings and words hang straight from it stopped with the same error, and could hang a tag twice; and **Reading position** of an
+  artifact stopped with `KeyError: None` — now it says an artifact is not read, so it has no position.
+
+Checked: new `tests/model_integrity_test.py` — the model's own operations; Build PDF with the reported case (a table with no rows next
+to a row that is dropped), with a blank row on top of a real one, with a table that has a caption and no rows, with a table that is in
+no list — each builds and passes qpdf, the structure checks and the balance of marked content; the heading grouping; and a **fuzz** of 25
+operations of the editor (roles, delete, wrap, lists, rows, merge, move, drop, levels, empty tags, remove tags, group by headings,
+zones drawn and deleted, geometry, split, rebuild, reading order …) over four files: after each, the tags are a tree (none out of it,
+none hung twice, every parent right), nothing stops, and a file built from the result builds. It fails on V4.32.1 and passes now;
+every other suite passes as it did.

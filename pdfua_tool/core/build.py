@@ -359,17 +359,21 @@ def build(model: DocModel, src: str, dst: str, opts: Options,
     # nothing associated — exactly what PAC reports. The empty copy goes.
     owned = {nid for lst in owners for nid in lst}
     dropped_rows = 0
-    for tr in [n for n in eff.nodes.values() if n.role == "TR" and not n.artifact]:
+    live = eff.attached_ids()               # V4.33: only what is in the tree is looked at — and what goes, goes from the model too
+    for tr in [n for n in eff.nodes.values() if n.role == "TR" and not n.artifact and n.id in live]:
+        if tr.id not in eff.nodes:          # (it went with a row that held it)
+            continue
         fam = [tr] + list(eff.descendants(tr.id))
         if any(d.id in owned or d.annots for d in fam):
             continue
-        eff.detach(tr.id)
+        eff.remove(tr.id, promote_children=False)
         dropped_rows += 1
     if dropped_rows:
         stats["empty_rows_dropped"] = dropped_rows
-        for tb in [n for n in eff.nodes.values() if n.role == "Table" and not n.artifact]:
-            if not any(d.role == "TR" for d in eff.descendants(tb.id)):
-                eff.detach(tb.id)
+        live = eff.attached_ids()
+        for tb in [n for n in eff.nodes.values() if n.role == "Table" and not n.artifact and n.id in live]:
+            if tb.id in eff.nodes and not any(d.role == "TR" for d in eff.descendants(tb.id)):
+                eff.remove(tb.id, promote_children=True)        # a caption or a note it held stays where the table was
 
     from .compat import house as _house
     # Kriyadocs (V4.17): an empty header cell stays TH, as in the client's files
