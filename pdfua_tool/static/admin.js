@@ -29,7 +29,7 @@
     if (tab === 'activity') loadLog();
     if (tab === 'templates') loadTemplates();
     if (tab === 'samples') { loadSamples(); loadLearning(); }
-    if (tab === 'brain') { loadBrain(); kbSearch(); }
+    if (tab === 'brain') { loadBrain(); loadTeacher(); kbSearch(); }
     if (tab === 'system') loadSystem();
     if (tab === 'workflow') loadWorkflow();
     if (tab === 'time') loadTime();
@@ -88,6 +88,8 @@
       tile(d.overdue || 0, 'overdue', `${d.urgent || 0} urgent open`, d.overdue ? 'bad' : 't-due', filt({ fSort: 'due' })),
       tile(d.busy, 'working now', d.failed ? `${d.failed} failed` : 'none failed', d.failed ? 'bad' : 't-busy', d.failed ? filt({ fStage: 'error' }) : null),
       tile(pct, '% errors fixed', `${fx.before || 0} → ${fx.after || 0} checker errors`, 't-fix'),
+      d.teacher ? tile(d.teacher.alone != null ? Math.round(d.teacher.alone * 100) : 0, '% answered by Dez AI alone',
+        d.teacher.lessons ? `${d.teacher.lessons.toLocaleString()} lessons from Ollama · ${d.teacher.students || 0}/${d.teacher.trainable || 0} students proven` : 'Ollama has not taught it yet', 't-dez', () => show('brain')) : null,
       today && !today.error ? tile(dur((today.work_s || 0) + (today.qc_s || 0)), 'worked today',
         `${today.users.length} people · ${dur(today.work_s || 0)} working · ${dur(today.qc_s || 0)} QC`, 't-time', () => show('time')) : null);
     $('aTiles').querySelectorAll('.tbig').forEach(countUp);
@@ -1143,7 +1145,7 @@
   // ------------------------------------------------------------ the self-learning brain (V4.25)
   const SRC = { rules: 'The analysis\u2019 rules', samples: 'Nearest sample tags', model: 'Its own trained model',
     style: 'The client\u2019s style map', wording: 'Wording memory', code: 'Learned code (its own rules)',
-    layout: 'The same look in this file', ai: 'The local AI (Ollama)' };
+    layout: 'The same look in this file', ai: 'Ollama, the teacher' };
   const pct = (v) => (v === null || v === undefined) ? '—' : Math.round(v * (v <= 1 ? 100 : 1)) + ' %';
   function svgEl(tag, attrs) {
     const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -1357,7 +1359,7 @@
     const r = await post('/api/admin/kb', { title: $('kbT').value, text: $('kbX').value, roles: $('kbR').value, client: $('kbC').value });
     if (!r.error) { UA.toast('House rule added — the AI reads it with every question'); $('kbT').value = $('kbX').value = ''; $('kbQ').value = ''; kbSearch(); }
   });
-  $('brRefresh').addEventListener('click', loadBrain);
+  $('brRefresh').addEventListener('click', () => { loadBrain(); loadTeacher(); });
   $('brTrain').addEventListener('click', async () => {
     const r = await post('/api/admin/brain/train', {});
     if (!r.error) { UA.toast(r.started ? 'Training the brain — a few seconds to a minute' : 'The brain is already busy'); setTimeout(loadBrain, 800); }
@@ -1366,6 +1368,145 @@
     if (!confirm('Let the local AI study every sample file again? On a CPU this takes about a minute per file; it runs in the background.')) return;
     const r = await post('/api/admin/brain/study', {});
     if (!r.error) { UA.toast(r.started ? 'The AI is studying the samples' : 'The brain is already busy'); setTimeout(loadBrain, 800); }
+  });
+
+  // ------------------------------------------------------------ Ollama teaches Dez AI (V4.31)
+  const LEVEL_HELP = {
+    off: 'Nothing is recorded or answered for this question.',
+    watch: 'Ollama answers every question; its answers are recorded as lessons.',
+    recall: 'Also answers a question it has been asked before, from its lessons.',
+    solo: 'Also answers a new question with its own trained student — once the student has proven itself against Ollama.' };
+  const LEVEL_NAME = { off: 'Off', watch: 'Watch', recall: 'Recall', solo: 'Solo' };
+  const tcOpen = new Set();
+  async function loadTeacher() {
+    const d = await UA.get('/api/admin/teacher');
+    if (!d || d.error) return;
+    renderTeacher(d);
+    clearTimeout(loadTeacher.t);
+    if (d.running) loadTeacher.t = setTimeout(() => { if (!$('pane-brain').classList.contains('hidden')) loadTeacher(); }, 2000);
+  }
+  function lessonView(l) {
+    let q = l.q || '', a = l.a || '';
+    try { const o = JSON.parse(q); q = Object.entries(o).filter(([k]) => k !== 'h' && k !== 'ar').map(([, v]) => (Array.isArray(v) ? v.join(' | ') : String(v))).filter(Boolean).join(' · '); } catch (e) { /* cut in the middle: show as it is */ }
+    try { const o = JSON.parse(a); a = typeof o === 'string' ? o : typeof o === 'boolean' ? (o ? 'yes' : 'no') : JSON.stringify(o); } catch (e) { /* as it is */ }
+    return { q: q.slice(0, 140), a: a.slice(0, 140) };
+  }
+  function lessonRow(l, withTask) {
+    const v = lessonView(l);
+    return el('div', { class: 'brin tclesson' },
+      el('div', { class: 'brinhead' },
+        el('span', { class: 'chip ' + (l.source === 'human' ? 'ok' : ''), text: l.source === 'human' ? 'person' : 'Ollama' }),
+        l.verdict > 0 ? el('span', { class: 'chip ok', title: 'a person confirmed it', text: '✓' }) : '',
+        l.verdict < 0 ? el('span', { class: 'chip err', title: 'a person changed it — it is not used any more', text: '✗' }) : '',
+        withTask ? el('b', { text: withTask }) : '',
+        el('span', { class: 'tiny muted', text: [l.model, l.seen > 1 ? `seen ×${l.seen}` : '', fmt(l.updated)].filter(Boolean).join(' · ') })),
+      el('div', { class: 'small tcq', text: v.q }), el('div', { class: 'small tca' }, '→ ', el('b', { text: v.a })));
+  }
+  function renderTeacher(d) {
+    const t = d.totals || {};
+    const set = d.settings || {};
+    const state = d.running ? ['studying…', 'warn'] : !set.teach ? ['not teaching', 'warn'] : !d.ollama ? [set.offline && set.solo ? 'Ollama is off — Dez AI alone' : 'Ollama is off', 'warn'] : ['Ollama is teaching', 'ok'];
+    $('tcState').textContent = state[0];
+    $('tcState').className = 'chip ' + state[1];
+    $('tcTrain').disabled = !!d.running;
+    $('tcHarvest').disabled = !!d.running;
+    const job = d.job || {};
+    const jr = job.result || {};
+    $('tcNote').textContent = d.running ? (job.what === 'files' ? `Reading the finished files… ${job.done || 0} of ${job.total || '?'}` : 'Dez AI is studying its lessons…')
+      : jr.error ? 'Last run: ' + jr.error
+        : job.what === 'files' && jr.files != null ? `Read ${jr.files} finished file(s): ${jr.human} decision(s) of people kept as lessons · ${jr.confirmed} of Ollama's answers confirmed · ${jr.corrected} changed.`
+          : job.what === 'study' && jr.tasks ? `Studied ${jr.tasks.length} task(s)${jr.skipped ? ` · ${jr.skipped} had nothing new` : ''}.` : '';
+    document.querySelectorAll('[data-teach]').forEach((cb) => { cb.checked = !!set[cb.dataset.teach]; });
+    document.querySelectorAll('[data-teachn]').forEach((inp) => {
+      const k = inp.dataset.teachn;
+      if (document.activeElement !== inp) inp.value = (k === 'agree' || k === 'sure') ? Math.round((set[k] || 0) * 100) : set[k];
+    });
+    const tile = (big, label, sub, cls) => el('div', { class: 'tile ' + cls },
+      el('div', { class: 'tbig', text: String(big) }), el('div', { class: 'tlabel', text: label }),
+      sub ? el('div', { class: 'tsub tiny', text: sub }) : '');
+    $('tcTiles').replaceChildren(
+      tile(t.alone != null ? Math.round(t.alone * 100) + ' %' : '—', 'Dez AI answers alone', t.week_dez + t.week_ollama ? `last 7 days: ${t.week_dez} by Dez AI · ${t.week_ollama} asked Ollama` : 'nothing asked yet', 't-done'),
+      tile((t.lessons || 0).toLocaleString(), 'Lessons kept', `${t.human || 0} from people · the rest from Ollama`, 't-files'),
+      tile((t.dez || 0).toLocaleString(), 'Ollama questions saved', t.saved ? `about ${dur(t.saved)} of waiting` + (t.ollama_secs ? ` (Ollama took ${dur(t.ollama_secs)} for ${t.ollama} answers)` : '') : 'since the first lesson', 't-open'),
+      tile(`${t.students || 0} / ${t.trainable || 0}`, 'Students proven', 'agree with Ollama on questions they had not seen', 't-check'),
+      tile(d.ollama_right != null ? Math.round(d.ollama_right * 100) + ' %' : '—', 'Ollama was right', 'tags judged by approved files', 't-fix'),
+      tile(((d.roles || {}).n || 0).toLocaleString(), 'Tags taught', `${(d.roles || {}).waiting || 0} train the model until a person has judged them · ${(d.roles || {}).changed || 0} changed by people`, 't-due'));
+    const body = $('tcTable').querySelector('tbody');
+    const rows = [];
+    (d.tasks || []).forEach((r) => {
+      const lv = el('select', { class: 'tclevel', 'aria-label': 'What Dez AI may do: ' + r.label, title: LEVEL_HELP[r.level] },
+        el('option', { value: 'auto', text: `Automatic (now: ${LEVEL_NAME[r.level]})`, selected: r.forced === 'auto' }),
+        ...(d.levels || []).map((L) => el('option', { value: L, text: LEVEL_NAME[L], disabled: (d.levels.indexOf(L) > d.levels.indexOf(r.max)), selected: r.forced === L })));
+      lv.addEventListener('change', async () => {
+        const x = await post('/api/admin/teacher', { levels: { [r.task]: lv.value } });
+        if (!x.error) { UA.toast(`${r.label}: ${lv.value === 'auto' ? 'automatic' : LEVEL_NAME[lv.value]}`, 1800); renderTeacher(x); }
+      });
+      const st = r.student;
+      const studentCell = r.max !== 'solo' ? el('span', { class: 'tiny muted', text: r.kind === 'watch' ? 'recorded only' : r.kind === 'picture' ? 'remembers the same picture' : 'remembers the same question' })
+        : st ? el('span', {}, el('span', { class: 'chip ' + (st.ready ? 'ok' : 'warn'), text: st.ready ? 'proven' : 'learning' }),
+          el('span', { class: 'tiny', text: ` ${st.n} lessons · right on unseen ${pct(st.acc)} · covers ${pct(st.cov)}` }),
+          st.note ? el('div', { class: 'tiny muted', text: st.note }) : '')
+          : el('span', { class: 'tiny muted', text: `needs ${set.min_lessons} lessons (${r.lessons} so far)` });
+      const tot = r.dez + r.ollama;
+      const ans = tot ? el('span', {}, el('span', { class: 'tcbar', title: `${r.dez} by Dez AI · ${r.ollama} by Ollama` }, el('i', { style: `width:${Math.round(100 * r.dez / tot)}%` })),
+        el('span', { class: 'tiny', text: ` Dez AI ${r.dez} · Ollama ${r.ollama}` }), r.idle ? el('span', { class: 'tiny muted', text: ` · ${r.idle} unanswered (Ollama off)` }) : '',
+        r.errors ? el('span', { class: 'tiny', style: 'color:var(--err)', text: ` · ${r.errors} failed` }) : '') : el('span', { class: 'tiny muted', text: '—' });
+      const open = tcOpen.has(r.task);
+      const more = el('button', { class: 'sm', 'aria-expanded': open ? 'true' : 'false', title: 'Show the lessons of this task', text: open ? '▾' : '▸', disabled: !r.lessons });
+      more.addEventListener('click', () => { if (tcOpen.has(r.task)) tcOpen.delete(r.task); else tcOpen.add(r.task); renderTeacher(d); });
+      const forget = el('button', { class: 'sm danger', title: 'Forget lessons of this task', text: '🗑', disabled: !r.lessons });
+      forget.addEventListener('click', async () => {
+        const all = confirm(`Forget ALL ${r.lessons} lesson(s) of “${r.label}”?\n\nOK = forget all · Cancel = choose something smaller`);
+        let what = all ? 'all' : '';
+        if (!all) {
+          if (confirm('Forget only what Ollama taught (keep the decisions of people)?')) what = 'teacher';
+          else if (confirm('Forget only the lessons people changed afterwards?')) what = 'corrected';
+        }
+        if (!what) return;
+        const x = await post('/api/admin/teacher/forget', { task: r.task, what });
+        if (!x.error) { UA.toast(`${x.deleted} lesson(s) forgotten`); loadTeacher(); }
+      });
+      const aud = r.audit || {};
+      rows.push(el('tr', { class: 'tcrow' + (r.lessons || tot ? '' : ' empty') },
+        el('td', {}, el('b', { text: r.label }), r.help ? el('div', { class: 'tiny muted', text: r.help }) : ''),
+        el('td', {}, lv), el('td', {}, el('b', { text: String(r.lessons) }),
+          r.lessons ? el('div', { class: 'tiny muted', title: 'judged by people: ✓ they kept Ollama\u2019s answer, ✗ they changed it', text: [r.human ? `${r.human} from people` : '', r.confirmed ? `✓ ${r.confirmed}` : '', r.corrected ? `✗ ${r.corrected}` : ''].filter(Boolean).join(' · ') }) : '',
+          r.ollama_right != null ? el('div', { class: 'tiny', text: `Ollama right ${pct(r.ollama_right)}` }) : ''),
+        el('td', {}, ans), el('td', {}, studentCell),
+        el('td', { class: 'small' }, aud.n ? el('span', { class: aud.agree >= set.agree ? '' : 'warnt', text: `${pct(aud.agree)} of ${aud.n}` }) : el('span', { class: 'muted', text: '—' })),
+        el('td', { class: 'nowrap' }, more, ' ', forget)));
+      if (open) rows.push(el('tr', { class: 'tcmore' }, el('td', { colspan: 7 }, el('div', { class: 'tclist', id: 'tcl-' + r.task }, el('span', { class: 'tiny muted', text: 'Loading…' })))));
+    });
+    body.replaceChildren(...rows);
+    tcOpen.forEach(async (task) => {
+      const box = document.getElementById('tcl-' + task);
+      if (!box) return;
+      const x = await UA.get('/api/admin/teacher/lessons?task=' + encodeURIComponent(task));
+      box.replaceChildren(...((x && x.lessons) || []).map((l) => lessonRow(l, '')));
+      if (!box.children.length) box.replaceChildren(el('span', { class: 'tiny muted', text: 'No lessons.' }));
+    });
+    const rec = d.recent || [];
+    const label = Object.fromEntries((d.tasks || []).map((r) => [r.task, r.label]));
+    $('tcRecent').replaceChildren(...(rec.length ? rec.map((l) => lessonRow(l, label[l.task] || l.task)) : [el('p', { class: 'small muted', text: 'Nothing yet — the first question Ollama answers is the first lesson.' })]));
+  }
+  document.querySelectorAll('[data-teach]').forEach((cb) => cb.addEventListener('change', async () => {
+    const r = await post('/api/admin/teacher', { [cb.dataset.teach]: cb.checked });
+    if (r.error) cb.checked = !cb.checked; else { UA.toast('Saved', 1400); renderTeacher(r); }
+  }));
+  document.querySelectorAll('[data-teachn]').forEach((inp) => inp.addEventListener('change', async () => {
+    const v = parseFloat(inp.value);
+    if (!isFinite(v)) return;
+    const r = await post('/api/admin/teacher', { [inp.dataset.teachn]: v });
+    if (!r.error) { UA.toast('Saved', 1400); renderTeacher(r); }
+  }));
+  $('tcTrain').addEventListener('click', async () => {
+    const r = await post('/api/admin/teacher/train', {});
+    if (!r.error) { UA.toast(r.started ? 'Dez AI is studying its lessons' : 'Dez AI is already studying'); setTimeout(loadTeacher, 500); }
+  });
+  $('tcHarvest').addEventListener('click', async () => {
+    if (!confirm('Read the finished files of this server once? What people decided in them becomes Dez AI’s lessons. It runs in the background and changes no file.')) return;
+    const r = await post('/api/admin/teacher/harvest', {});
+    if (!r.error) { UA.toast(r.started ? 'Reading the finished files…' : 'Dez AI is busy'); setTimeout(loadTeacher, 500); }
   });
 
   async function showSample(id) {
@@ -1462,7 +1603,8 @@
       row('Users / profiles', `${d.users} / ${d.profiles}`),
       row('Files by stage', `${st.review || 0} to review · ${st.done || 0} built · ${st.error || 0} failed · ${(st.queued || 0) + (st.processing || 0)} waiting/working`),
       row('At the same time', `${(d.parallel || {}).files || '?'} files, ${(d.parallel || {}).page_procs || '?'} cores each`),
-      row('Dez AI', el('span', {}, el('span', { class: 'chip ' + (d.ai.enabled ? 'ok' : 'warn'), text: d.ai.enabled ? 'on' : 'off' }), ' ', el('span', { class: 'small', text: `${d.ai.base_url || ''} ${d.ai.text_model ? '· ' + d.ai.text_model : ''}` }))),
+      row('Ollama (teacher)', el('span', {}, el('span', { class: 'chip ' + (d.ai.enabled ? 'ok' : 'warn'), text: d.ai.enabled ? 'on' : 'off' }), ' ', el('span', { class: 'small', text: `${d.ai.base_url || ''} ${d.ai.text_model ? '· ' + d.ai.text_model : ''}` }))),
+      row('Dez AI', d.teacher ? `${(d.teacher.lessons || 0).toLocaleString()} lesson(s) from Ollama and people · answers ${d.teacher.alone != null ? Math.round(d.teacher.alone * 100) + ' %' : '—'} alone (7 days) · ${d.teacher.students || 0} of ${d.teacher.trainable || 0} students proven` : '—'),
       row('Learning', Object.entries(d.learning || {}).map(([k, v]) => `${k.replace('_', ' ')} ${v ? 'on' : 'off'}`).join(' · ')),
       ...loadRows(d, row));
   }
@@ -1481,7 +1623,8 @@
       })()),
       row('Files waiting', q.waiting ? `${q.waiting} (${waiting}) · waited ${q.avg_wait_s}s on average, ${q.max_wait_s}s at most` : 'none'),
       row('One PDF at a time', `${mu.requests || 0} requests · ${mu.waited || 0} had to wait (${mu.avg_wait_ms || 0} ms on average, ${mu.max_wait_ms || 0} ms at most) · ${mu.waiting_now || 0} waiting now`),
-      row('Learning from edits', `${lv.runs || 0} runs · ${lv.running || 0} now · ${lv.waiting || 0} waiting${lv.failed ? ' · ' + lv.failed + ' failed' : ''}`)];
+      row('Learning from edits', `${lv.runs || 0} runs · ${lv.running || 0} now · ${lv.waiting || 0} waiting${lv.failed ? ' · ' + lv.failed + ' failed' : ''}`),
+      d.speed ? row('What keeps it quick', `${d.speed.files_known} files known, read ${d.speed.meta_parsed}× (${d.speed.listings} lists, ${d.speed.folder_scans} looks at the folder) · tags of ${d.speed.tags_in_memory} file(s) in memory, ${d.speed.copies} being edited · ${d.speed.answers_kept} answers kept`) : null].filter(Boolean);
   }
   $('cuPreview').addEventListener('click', async () => {
     const r = await post('/api/admin/cleanup', { which: $('cuWhich').value, days: $('cuDays').value, preview: true });

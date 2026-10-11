@@ -391,6 +391,13 @@ def _json_from(text: str):
 
 
 def _generate(cfg: AIConfig, kind: str, payload: dict, task: str = "") -> dict:
+    try:                                  # V4.31: Dez AI shows Ollama how people here worded similar things
+        from .teacher import prompt_extra
+        extra = prompt_extra()
+        if extra and isinstance(payload.get("prompt"), str):
+            payload = dict(payload, prompt=payload["prompt"] + "\n\n" + extra)
+    except Exception:
+        pass
     model, _ = resolve_model(cfg, kind, task)
     try:
         return _post(cfg, "/api/generate", _tune(cfg, dict(payload, model=model), task))
@@ -1182,3 +1189,14 @@ def embed(cfg: AIConfig, texts: list[str], model: str) -> list[list[float]]:
         d = _post(cfg, "/api/embeddings", {"model": model, "prompt": t[:500]}, timeout=60)
         out.append(d.get("embedding") or [])
     return out
+
+
+# ------------------------------------------------ Ollama teaches Dez AI (V4.31)
+# Every question above goes through a gate (core/teacher.py): Dez AI answers first when it has been taught the answer
+# (its lessons, or a student proven against Ollama's own answers), and asks Ollama — keeping the answer as a lesson —
+# when it has not. `fn(cfg, ..., _direct=True)` asks Ollama only, as before.
+try:
+    from . import teacher as _teacher
+    _teacher.install(globals())
+except Exception:                                            # the tool works without it
+    pass

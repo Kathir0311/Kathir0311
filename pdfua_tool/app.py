@@ -51,12 +51,13 @@ from core.fairqueue import FairQueue
 from core.jobindex import JobIndex
 from core.modelsync import Shadow
 from core import rights as RIGHTS
+from core import teacher as TEACHER
 from core.worktime import WorkTimes, kind_of as time_kind, fmt as time_fmt
 from core.locks import FairRLock, replace_file
 from core.preflight import tesseract_info
 from core.report import write_batch_summary
 
-VERSION = "4.29.0"
+VERSION = "4.31.0"
 BASE = os.path.dirname(os.path.abspath(__file__))
 JOBS = os.environ.get("PDFUA_JOBS", os.path.join(BASE, "jobs"))
 CONFIG_PATH = os.environ.get("PDFUA_CONFIG", os.path.join(BASE, "config.json"))
@@ -505,7 +506,11 @@ _NO_LOCK = ("/status", "/stop")
 PURE_EDITS = {"api_node", "api_move", "api_levels", "api_bulk", "api_order", "api_undo", "api_actual_text",
               "api_headers_fix", "api_order_fix"}
 PURE_READS = {"api_job_summary", "api_findings", "api_job_info", "api_lint", "api_job_brain",
-              "api_actualtext_tags", "api_zones_similar", "api_job_wf", "api_xref"}
+              "api_actualtext_tags", "api_zones_similar", "api_job_wf", "api_xref",
+              # V4.30: what the editor's panels ask after a change — they read the tags and never open the PDF (their
+              # POSTs do, and take the lock as before)
+              "api_alt_captions", "api_backmatter", "api_bibliography", "api_cell_lists", "api_marks", "api_page_numbers_all",
+              "api_split_zones", "api_table", "api_tidy_lists"}
 _req_locks: dict[str, FairRLock] = {}
 _req_guard = threading.Lock()
 LOCK_AUDIT = os.environ.get("PDFUA_LOCK_AUDIT", "") == "1"      # tests: a request that opens a PDF unlocked fails
@@ -649,8 +654,15 @@ def _mupdf_lock_acquire():
         g.req_lock = lk
 
 
+@app.before_request
+def _teacher_bind():
+    """V4.31: a question Ollama answers while this request runs is a lesson about this file."""
+    TEACHER.bind((request.view_args or {}).get("jid") or "")
+
+
 @app.teardown_request
 def _mupdf_lock_release(exc=None):
+    TEACHER.unbind()
     for lk in reversed(g.pop("locks", None) or []):
         try:
             lk.release()
@@ -834,7 +846,8 @@ _mc_lock = threading.Lock()
 # V4.30: next to the tags of a file in memory, a copy of how they were when last saved (core/modelsync.py) —
 # the difference after an edit says which tags to write again and which rows the editor must change.
 _SHADOWS: "collections.OrderedDict[str, Shadow]" = collections.OrderedDict()
-SHADOW_EVERY = 40            # every 40th save starts the copy afresh (a safety net, not a need)
+SHADOW_EVERY = 500           # every 500th save starts the copy afresh (a safety net, not a need: it costs ~0.15 s on a big file)
+SHADOW_MAX = 10              # the copies of the files being edited (a copy is about the size of the file in memory)
 
 
 def _cache_model(jid: str, mt: float, model: DocModel) -> None:
@@ -844,7 +857,7 @@ def _cache_model(jid: str, mt: float, model: DocModel) -> None:
         while len(_model_cache) > MODEL_CACHE_MAX:
             gone, _ = _model_cache.popitem(last=False)
             _SHADOWS.pop(gone, None)
-        while len(_SHADOWS) > MODEL_CACHE_MAX:
+        while len(_SHADOWS) > SHADOW_MAX:
             _SHADOWS.popitem(last=False)
 
 
@@ -944,6 +957,7 @@ def mutate(jid: str):
                 or o["children"] != model.nodes[nid].children for nid in changed):
             model.check_integrity()                # only a change of the structure can leave a loose end
             changed, gone, tops = sh.diff(model)
+            renumber = True                        # (it may have mended the tree)
         sh.commit(model, changed, gone, tops)
         _write_model(jid, model, sh)
         _REV[secure_filename(jid)] = _REV.get(secure_filename(jid), 0) + 1
@@ -1298,7 +1312,7 @@ def run_prepare(jid: str) -> None:
     update_meta(jid, stage="processing", progress=0, message="starting", error="")
     cfg = ai_cfg()
     task = {"kind": "prepare", "options": opts.to_dict(), "filename": meta.get("filename", ""),
-            "ai": cfg.to_dict() if cfg.enabled else None}
+            "ai": cfg.to_dict() if (cfg.enabled or TEACHER.offline_knows()) else None}
     try:
         r = _run(jid, task)
     except JobStopped:
@@ -1578,6 +1592,7 @@ def env_status() -> dict:
     return {"tesseract": t.get("available", False), "tess_langs": t.get("langs", []),
             "verapdf": checker.find_verapdf(load_config().get("verapdf", "")),
             "ai_enabled": load_config()["ai"].get("enabled", True), "version": VERSION,
+            "dez_offline": TEACHER.offline_knows(),
             "parallel": parallel_settings()}
 
 
@@ -2544,7 +2559,7 @@ def api_reorder(jid):
 @app.route("/api/job/<jid>/table/<tid>", methods=["GET", "POST"])
 def api_table(jid, tid):
     if request.method == "GET":
-        model = load_model(job_dir(jid))
+        model = get_model(jid)
         if tid not in model.nodes:
             return _err("no such tag", 404)
         occ, widths = table_grid(model, tid)
@@ -3190,9 +3205,10 @@ def api_page_numbers_all(jid):
     from core.repair import page_number_tags, page_numbers_as
     if request.method == "GET":
         model = get_model(jid)
-        return jsonify({"ok": True, "mode": getattr(job_opts(jid), "page_numbers", "artifact"),
-                        "to_p": len(page_number_tags(model, True)),
-                        "to_artifact": len(page_number_tags(model, False))})
+        mode = getattr(job_opts(jid), "page_numbers", "artifact")
+        return serve_cached(LINT_BYTES, ("pagenumbers", secure_filename(jid)), f'W/"pn-{model_rev(jid)}-{mode}"',
+                            lambda: {"ok": True, "mode": mode, "to_p": len(page_number_tags(model, True)),
+                                     "to_artifact": len(page_number_tags(model, False))})
     b = request.get_json(force=True) or {}
     as_p = str(b.get("as") or "P") == "P"
     word = getattr(job_opts(jid), "page_number_text", "Page")
@@ -3331,7 +3347,7 @@ def api_tidy_lists(jid):
                              lists_read_short, loose_sub_items, split_lists, stray_list_items,
                              tidy_lists)
     if request.method == "GET":
-        model = load_model(job_dir(jid))
+        model = get_model(jid)
         return jsonify({"ok": True, "stray": stray_list_items(model),
                         "junk": junk_in_text(model),
                         "split": [a for a, _ in split_lists(model)],
@@ -3351,7 +3367,7 @@ def api_bibliography(jid):
     """Reference lists: one BibEntry per entry, then the citations linked again."""
     from core import biblio
     if request.method == "GET":
-        model = load_model(job_dir(jid))
+        model = get_model(jid)
         p = biblio.problems(model)
         secs = [{"id": h, "page": model.nodes[h].page, "text": model.nodes[h].text}
                 for h in p["sections"]]
@@ -3399,7 +3415,7 @@ def api_backmatter(jid):
     (footnotes both ways, captions both ways, every index page number)."""
     from core import backmatter
     if request.method == "GET":
-        model = load_model(job_dir(jid))
+        model = get_model(jid)
         heads = backmatter.index_problems(model)
         return jsonify({"ok": True, "index": [{"id": h, "page": model.nodes[h].page} for h in heads]})
     opts = job_opts(jid)
@@ -3463,7 +3479,7 @@ def api_cell_lists(jid):
     """A list printed inside a table cell becomes L > LI > Lbl + LBody there."""
     from core.repair import cell_lists, cells_with_lists
     if request.method == "GET":
-        model = load_model(job_dir(jid))
+        model = get_model(jid)
         return jsonify({"ok": True, "ids": cells_with_lists(model)})
     d = request.get_json(force=True) or {}
     ids = [str(i) for i in (d.get("ids") or [])] or None
@@ -3477,7 +3493,7 @@ def api_alt_captions(jid):
     """Figures with no /Alt and the caption printed with them; POST applies it."""
     from core.repair import alt_from_captions
     if request.method == "GET":
-        model = load_model(job_dir(jid))
+        model = get_model(jid)
         return jsonify({"ok": True, "items": alt_from_captions(model)})
     d = request.get_json(force=True) or {}
     pick = {str(i) for i in (d.get("ids") or [])}
@@ -3691,18 +3707,21 @@ def api_ai_alt(jid, nid):
         return _err("no such figure", 404)
     ctx = " ".join(n.text for n in model.ordered_nodes() if n.page == node.page and n.text)[:800]
     try:
-        text = alt_text(cfg, _figure_png(jid, node), ctx)
+        with TEACHER.tally() as tl:
+            text = alt_text(cfg, _figure_png(jid, node), ctx)
     except OllamaError as exc:
         return jsonify({"error": str(exc)})
     except Exception as exc:
         return jsonify({"error": f"alt text failed: {exc}"})
+    if not text and not cfg.enabled:
+        return jsonify({"error": "Ollama is switched off and Dez AI has not learned this picture yet", "by": dict(tl)})
     if text.upper().startswith("DECORATIVE"):
-        return jsonify({"ok": True, "decorative": True, "alt": ""})
+        return jsonify({"ok": True, "decorative": True, "alt": "", "by": dict(tl)})
     with mutate(jid) as m2:
         if nid in m2.nodes:
             m2.nodes[nid].alt = text
             m2.nodes[nid].source = "ai"
-    return jsonify({"ok": True, "alt": text})
+    return jsonify({"ok": True, "alt": text, "by": dict(tl)})
 
 
 @app.route("/api/job/<jid>/ai/alt_all", methods=["GET", "POST"])
@@ -3736,12 +3755,15 @@ def api_ai_roles(jid):
                "page": n.page} for i, n in enumerate(cands, start=1)]
     changes = []
     try:
-        for s in range(0, len(blocks), 40):
-            changes += review_roles(cfg, blocks[s:s + 40])
+        with TEACHER.tally() as tl:
+            for s in range(0, len(blocks), 40):
+                changes += review_roles(cfg, blocks[s:s + 40])
     except OllamaError as exc:
         return jsonify({"error": str(exc)})
     except Exception as exc:
         return jsonify({"error": f"role review failed: {exc}"})
+    if not cfg.enabled:
+        return jsonify({"error": "Ollama is switched off in Settings — Dez AI reviews tag roles with its brain when a file is analysed"})
     out = []
     for ch in changes:
         nid = index.get(ch["i"])
@@ -3752,15 +3774,32 @@ def api_ai_roles(jid):
         if ch["role"] != cur:
             out.append({"id": nid, "from": cur, "to": ch["role"], "why": ch.get("why", ""),
                         "text": n.text[:100], "page": n.page})
-    return jsonify({"ok": True, "suggestions": out})
+    return jsonify({"ok": True, "suggestions": out, "by": dict(tl)})
 
 
 # ------------------------------------------------------- more AI helpers
+def _with_by(resp, tl: dict):
+    """V4.31: say who answered — Dez AI from what it has learned, or Ollama (the teacher)."""
+    try:
+        if hasattr(resp, "get_json") and resp.mimetype == "application/json" and (tl["dez"] or tl["ollama"] or tl["idle"]):
+            d = resp.get_json()
+            if isinstance(d, dict):
+                d["by"] = dict(tl)
+                return jsonify(d)
+    except Exception:
+        pass
+    return resp
+
+
 def _ai_guard(fn):
     """Every AI endpoint answers the same way when the server is not there."""
     def wrapper(jid, *a, **kw):
         try:
-            return fn(jid, *a, **kw)
+            with TEACHER.tally() as tl:
+                resp = fn(jid, *a, **kw)
+            if tl["idle"] and not tl["dez"] and not tl["ollama"]:
+                return jsonify({"error": "Ollama is switched off in Settings, and Dez AI has not learned these yet", "by": dict(tl)})
+            return _with_by(resp, tl)
         except OllamaError as exc:
             return jsonify({"error": str(exc)})
         except Exception as exc:
@@ -4557,7 +4596,7 @@ def api_admin_overview():
                     "urgent": sum(1 for m in jobs if m.get("priority") == "urgent" and (m.get("work") or "") not in ("approved", "delivered")),
                     "fixed": {"before": fixed_before, "after": fixed_after},
                     "trend": [{"day": d, **trend[d]} for d in days], "recent": log[:10], "samples": samp,
-                    "states": WORK_STATES, "queue": queue_info(), "version": VERSION})
+                    "states": WORK_STATES, "queue": queue_info(), "version": VERSION, "teacher": TEACHER.brief()})
 
 
 @app.route("/api/admin/files")
@@ -5033,6 +5072,9 @@ def _dir_size(path: str) -> int:
     return tot
 
 
+_DIR_SIZE: list = [0.0, 0]
+
+
 @app.route("/api/admin/system")
 def api_admin_system():
     import platform
@@ -5044,13 +5086,23 @@ def api_admin_system():
     except Exception:
         disk = {}
     cfg = load_config()
+    if time.time() - _DIR_SIZE[0] > 60:                       # V4.30: walking every file of the server takes a while — once a minute at most
+        _DIR_SIZE[:] = [time.time(), _dir_size(JOBS)]
     return jsonify({"version": VERSION, "python": platform.python_version(), "pymupdf": pymupdf.__version__,
-                    "jobs": len(jobs), "jobs_size": _dir_size(JOBS), "disk": disk, "queue": queue_info(),
+                    "jobs": len(jobs), "jobs_size": _DIR_SIZE[1], "disk": disk, "queue": queue_info(),
                     "parallel": cfg.get("parallel"), "ai": {k: cfg["ai"].get(k) for k in ("enabled", "base_url", "text_model", "vision_model")},
                     "learning": learning_cfg(), "samples": LEARN.db_stats(), "users": len(ACCOUNTS.all()),
                     "profiles": len(all_profiles()), "stages": {s: sum(1 for m in jobs if m.get("stage") == s)
                                                                 for s in ("review", "done", "error", "queued", "processing", "building", "question")},
-                    "load": load_stats(), "live": dict(LIVE_STATS)})
+                    "load": load_stats(), "live": dict(LIVE_STATS), "speed": speed_stats(), "teacher": TEACHER.brief()})
+
+
+def speed_stats() -> dict:
+    """V4.30: what keeps the pages quick — the files' meta kept in memory, the tags of the files being edited, the answers kept."""
+    return {"files_known": JOBINDEX.count(), "meta_parsed": JOBINDEX.stats["parsed"], "folder_scans": JOBINDEX.stats["scans"],
+            "listings": JOBINDEX.stats["listings"], "tags_in_memory": len(_model_cache), "copies": len(_SHADOWS),
+            "answers_kept": len(MODEL_BYTES.d) + len(LINT_BYTES.d) + len(LIST_BYTES.d) + len(ZONE_BYTES.d),
+            "time_flushes": TIMES.flushes}
 
 
 @app.route("/api/admin/cleanup", methods=["POST"])
@@ -5376,6 +5428,10 @@ def _learn_from_approved(jid: str) -> str:
                 auto = DocModel.from_json(fh.read())
         with MUPDF_LOCK:
             MEMORY.learn(d, client, _lm(d), auto, verified=True)
+    except Exception:
+        pass
+    try:                                       # V4.31: what people decided in it is Dez AI's lesson, and judges Ollama's
+        TEACHER.learn_job(d, client, _lm(d), auto, verified=True)
     except Exception:
         pass
     log_action("learned from", jid, meta.get("filename", ""), f"sample of {client or 'every client'}")
@@ -5754,6 +5810,126 @@ def api_admin_brain():
         st["zones"] = {"models": [], "error": str(exc)}
     st["load"] = load_stats()
     return jsonify(st)
+
+
+# ================================================================ Ollama teaches Dez AI (V4.31)
+TEACHER.set_resolver(lambda jid: _job_client(jid))
+_TEACH = {"thread": None, "what": "", "result": None, "started": "", "done": 0, "total": 0}
+
+
+def _teach_bg(what: str, args: list[str]) -> bool:
+    """Study the lessons / read the finished files of this server — in a process of its own, below the web server's
+    priority, one at a time (a person's next click is never slower because Dez AI is learning)."""
+    t = _TEACH.get("thread")
+    if t is not None and t.is_alive():
+        return False
+
+    def run():
+        import subprocess
+        res: dict = {}
+        try:
+            kw: dict = {}
+            if os.name == "nt":
+                kw["creationflags"] = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+            else:
+                kw["preexec_fn"] = lambda: os.nice(12)
+            p = subprocess.Popen([sys.executable, "-m", "core.teacher", *args], cwd=BASE, env=dict(os.environ),
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, **kw)
+            last = ""
+            for line in p.stdout:
+                if line.startswith("@@P "):
+                    try:
+                        _, d, tot = line.split()
+                        _TEACH["done"], _TEACH["total"] = int(d), int(tot)
+                    except ValueError:
+                        pass
+                elif line.strip().startswith("{"):
+                    last = line.strip()
+            p.wait(timeout=60)
+            try:
+                res = json.loads(last or "{}")
+            except ValueError:
+                res = {"error": "no answer from the learner"}
+        except Exception as exc:
+            res = {"error": str(exc)[:300]}
+        _TEACH["result"] = res
+        TEACHER.settings(fresh=True)
+
+    _TEACH.update(what=what, result=None, done=0, total=0, started=datetime.now().isoformat(timespec="seconds"))
+    t = threading.Thread(target=run, name="teacher-" + what, daemon=True)
+    _TEACH["thread"] = t
+    t.start()
+    return True
+
+
+def _teacher_watch() -> None:
+    """Every minute and a half: have the lessons grown enough to learn from again? (below the web server's priority)"""
+    while True:
+        time.sleep(90)
+        try:
+            if TEACHER.settings()["teach"] and TEACHER.needs_training():
+                _teach_bg("study", ["train"])
+        except Exception:
+            pass
+
+
+if os.environ.get("PDFUA_NO_TEACHER_THREAD", "") != "1":
+    threading.Thread(target=_teacher_watch, name="teacher-watch", daemon=True).start()
+
+
+@app.route("/api/admin/teacher", methods=["GET", "POST"])
+def api_admin_teacher():
+    if request.method == "POST":
+        b = request.get_json(force=True) or {}
+        try:
+            with config_edit() as cfg:
+                cfg["teacher"] = TEACHER.clean_settings(b, cfg.get("teacher") or {})
+        except (TypeError, ValueError) as exc:
+            return _err(f"not a valid setting: {exc}")
+        TEACHER.settings(fresh=True)
+        log_action("Dez AI teacher settings", "", "", ", ".join(f"{k}={v}" for k, v in b.items() if k != "levels")[:200])
+    st = TEACHER.status()
+    t = _TEACH.get("thread")
+    st["ollama"] = bool(ai_cfg().enabled)
+    st["running"] = bool(t is not None and t.is_alive())
+    st["job"] = {"what": _TEACH.get("what"), "result": _TEACH.get("result"), "started": _TEACH.get("started"),
+                 "done": _TEACH.get("done"), "total": _TEACH.get("total")}
+    return jsonify(st)
+
+
+@app.route("/api/admin/teacher/train", methods=["POST"])
+def api_admin_teacher_train():
+    ok = _teach_bg("study", ["train", "--force"])
+    log_action("Dez AI studied its lessons", "", "", "by hand")
+    return jsonify({"ok": True, "started": ok})
+
+
+@app.route("/api/admin/teacher/harvest", methods=["POST"])
+def api_admin_teacher_harvest():
+    ok = _teach_bg("files", ["harvest"])
+    log_action("Dez AI learns from the files on this server", "", "", "")
+    return jsonify({"ok": True, "started": ok})
+
+
+@app.route("/api/admin/teacher/forget", methods=["POST"])
+def api_admin_teacher_forget():
+    b = request.get_json(force=True) or {}
+    task, what = str(b.get("task") or ""), str(b.get("what") or "all")
+    if what not in ("all", "teacher", "corrected"):
+        return _err("what: all, teacher or corrected")
+    n = TEACHER.forget(task, what)
+    log_action("Dez AI forgot lessons", "", "", f"{task}: {what} ({n})")
+    return jsonify({"ok": True, "deleted": n})
+
+
+@app.route("/api/admin/teacher/lessons")
+def api_admin_teacher_lessons():
+    task = request.args.get("task", "")
+    try:
+        off = max(0, int(request.args.get("offset", "0")))
+    except ValueError:
+        off = 0
+    return jsonify({"task": task, "lessons": TEACHER.lessons_list(task, 40, off)})
 
 
 @app.route("/api/admin/zones/train", methods=["POST"])

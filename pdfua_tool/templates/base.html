@@ -71,8 +71,8 @@
 <dialog id="settingsDlg">
   <div class="dlg">
     <h3>Settings</h3>
-    <h2 style="margin-top:12px">Dez AI — the local model (Ollama)</h2>
-    <p class="muted small">Dez AI drafts alternative text and second-guesses tag roles. Everything stays on your server; the tool works without it.</p>
+    <h2 style="margin-top:12px">Ollama — the teacher of Dez AI</h2>
+    <p class="muted small">Ollama drafts alternative text and second-guesses tag roles. Every answer it gives is kept as a lesson: <b>Dez AI</b>, the studio’s own offline AI, learns from it and answers by itself what it has learned (Admin → 🧠 Dez AI → <i>Ollama teaches Dez AI</i>). Everything stays on your server; the tool works without Ollama.</p>
     <label>Server URL<input id="cfgUrl" value="{{ cfg.ai.base_url }}"></label>
     <div class="twocol">
       <label>Text model<input id="cfgText" value="{{ cfg.ai.text_model }}" list="ollamaText" placeholder="auto (best installed)"></label>
@@ -81,7 +81,7 @@
     </div>
     <div class="twocol">
       <label>Timeout (s)<input id="cfgTimeout" type="number" value="{{ cfg.ai.timeout }}"></label>
-      <label class="row" style="margin-top:22px"><input type="checkbox" id="cfgEnabled" {% if cfg.ai.enabled %}checked{% endif %}> Enable Dez AI</label>
+      <label class="row" style="margin-top:22px"><input type="checkbox" id="cfgEnabled" {% if cfg.ai.enabled %}checked{% endif %} title="Switched off: Dez AI still answers what it has learned from Ollama, and nothing new is asked"> Ask Ollama (the teacher)</label>
     </div>
     <div class="twocol">
       <label title="Ollama keeps the model in memory for this long after an answer (30m, 2h, 0 = unload at once). Loading a vision model from disk is most of the time a drawn zone used to take.">Keep the model loaded<input id="cfgKeep" value="{{ cfg.ai.keep_alive }}" placeholder="30m"></label>

@@ -611,6 +611,10 @@ def data_signature(c: sqlite3.Connection) -> str:
     parts = [str(a["n"]), str(a["m"] or "")]
     for t in ("blocks", "corrections", "feedback", "docs"):
         parts.append(str(c.execute(f"SELECT COUNT(*) n FROM {t}").fetchone()["n"]))
+    try:                                      # V4.31: the teacher's tags that train until a person judges them
+        parts.append(str(c.execute("SELECT COUNT(*) n FROM teacher_roles WHERE accepted=1 AND verdict=0").fetchone()["n"]))
+    except sqlite3.OperationalError:
+        pass
     return ":".join(parts)
 
 
@@ -663,6 +667,11 @@ def training_rows(c: sqlite3.Connection, cap: int = 40000) -> list[tuple]:
             continue
         rows.append((dense(f), tokens(f, f["text"], f["client"] or "", ""), f["role"],
                      1.5 * recency(f.get("created"), now), "fb:" + str(f["job"])))
+    try:                                      # V4.31: what Ollama taught and no person has judged yet (weighs little)
+        from . import teacher
+        rows += teacher.role_rows(c, now)
+    except Exception:
+        pass
     if len(rows) > cap:
         # keep every rarer tag, thin out the paragraphs
         import random
@@ -853,6 +862,11 @@ def train_all(trigger: str = "after learning", force: bool = False) -> dict:
         out["zones"] = zonelearn.train_all(force=force)
     except Exception as exc:
         out["zones"] = {"ok": False, "error": str(exc)[:300]}
+    try:                                         # V4.31: what Ollama taught
+        from . import teacher
+        out["teacher"] = teacher.train_all(force=force)
+    except Exception as exc:
+        out["teacher"] = {"tasks": [], "error": str(exc)[:300]}
     return out
 
 
@@ -1530,8 +1544,15 @@ def think(model, pdf_path: str, opts=None, ai_cfg=None, client: str = "", job: s
             unsure = [i for i in unsure if cands[i][0].id not in changed][:max(0, ai_max)]
             progress(0.5, f"brain: asking the AI about {len(unsure)} tag(s)")
             try:
-                out.update(_ask_ai(model, ctx, cands, unsure, probs, ai_cfg, client, weights, decisions, changed,
-                                   out, confs))
+                got = _ask_ai(model, ctx, cands, unsure, probs, ai_cfg, client, weights, decisions, changed, out, confs)
+                taught = got.pop("_taught", [])
+                out.update(got)
+                if taught:                        # V4.31: what Ollama answered becomes Dez AI's lessons
+                    try:
+                        from . import teacher
+                        out["taught"] = teacher.roles_taught(client, job, out.get("doc_type") or "", taught)
+                    except Exception:
+                        pass
             except Exception as exc:
                 out["ai_error"] = str(exc)[:300]
         # tags the brain is still unsure of are outlined for review
@@ -1579,6 +1600,7 @@ def _ask_ai(model, ctx, cands, idxs, probs, ai_cfg, client, weights, decisions, 
     except Exception:
         pass
     dec_by_i = {d["i"]: d for d in decisions if d["i"] >= 0}
+    taught: list = []
     for k in range(0, len(idxs), 15):
         part = idxs[k:k + 15]
         blocks = []
@@ -1622,6 +1644,9 @@ def _ask_ai(model, ctx, cands, idxs, probs, ai_cfg, client, weights, decisions, 
             for row in confs:
                 if row[2] == i:
                     row[0] = max(row[0], conf if a["role"] == d["final"] else row[0])
+            taught.append({"node": n.id, "text": text, "f": f, "proposed": role, "role": a["role"], "conf": conf,
+                           "accepted": a["role"] == d["final"], "why": a.get("why") or ""})
+    res["_taught"] = taught
     return res
 
 
@@ -1671,6 +1696,11 @@ def learn_outcome(c: sqlite3.Connection, job: str, client: str, model, auto=None
     if model is None:
         return res
     final = _final_roles(model)
+    try:                                      # V4.31: the approved tags confirm or overrule what Ollama taught
+        from . import teacher
+        res["teacher"] = teacher.roles_judged(job, final, True, c=c)
+    except Exception:
+        pass
     rows = list(c.execute("SELECT rowid, node, opinions FROM decisions WHERE job=? AND learned=0", (job,)))
     upd = collections.Counter()
     tot = collections.Counter()
@@ -1776,6 +1806,11 @@ def record_feedback(job_path: str, client: str, model, auto, by: str = "") -> di
         c.execute("INSERT INTO history VALUES (?,?,?,?,?,?,?,?,?,?)",
                   (job, client, "built", _now(), total, same, round(100.0 * same / total, 1) if total else None, bq,
                    None, ((auto.info or {}).get("brain") or {}).get("doc_type")))
+    try:
+        from . import teacher
+        teacher.roles_judged(job, _final_roles(model), False)
+    except Exception:
+        pass
     hits = 0
     try:                                      # V4.26: did people undo what a learned rule did?
         from . import codegen

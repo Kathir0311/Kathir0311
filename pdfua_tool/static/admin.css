@@ -25,6 +25,7 @@
 .tmbox{margin:6px 0}
 .tmbox table{max-width:520px}
 .tile.t-time{background:linear-gradient(135deg,#0a7d86,#25b5a6)}
+.tile.t-dez{background:linear-gradient(135deg,#5b3fd1,#22a38f)}
 .tmspark{grid-template-columns:repeat(var(--n,14),1fr)}
 .sbars.stack{flex-direction:column-reverse;align-items:stretch;gap:0}
 .sbars.stack i{width:100%;border-radius:0;min-height:0}
@@ -73,3 +74,28 @@
 @media (prefers-reduced-motion:reduce){
   .filterbar,.fchip,.advpanel,.selbanner,.emptystate,.emptystate .eico,.apane.tabin,.card.reveal,.ucard.reveal,.atabs button.on,#fAdv .count{animation:none!important;transition:none!important}
     }
+
+/* ---------------------------------------------------------------- Ollama teaches Dez AI (V4.31) */
+.teachcard{margin-bottom:14px;position:relative;overflow:hidden}
+.teachcard::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:linear-gradient(90deg,#7c5cff,#22a38f,#e0a526);opacity:.85}
+.tcnums{align-items:flex-end;gap:12px;margin:8px 0 12px}
+.tcnums label{display:flex;flex-direction:row;align-items:center;gap:6px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.tcnums input[type=number]{width:74px}
+.tctable td{vertical-align:top}
+.tctable .tclevel{max-width:210px}
+.tctable .nowrap{white-space:nowrap}
+.tcrow.empty td{opacity:.78}
+.tcrow{transition:background .15s}
+.tcrow:hover{background:var(--panel-2)}
+.tcbar{display:inline-block;vertical-align:middle;width:64px;height:7px;border-radius:99px;background:var(--line);overflow:hidden}
+.tcbar i{display:block;height:100%;background:linear-gradient(90deg,#22a38f,#3fb37a);border-radius:99px;transform-origin:left;animation:tcgrow .6s cubic-bezier(.2,.7,.2,1) both}
+@keyframes tcgrow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.tcmore td{background:var(--panel-2);padding:6px 10px}
+.tclist{display:flex;flex-direction:column;gap:6px;max-height:340px;overflow:auto}
+.tclesson{padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel)}
+.tclesson .tcq{color:var(--muted);overflow-wrap:anywhere}
+.tclesson .tca{overflow-wrap:anywhere}
+.warnt{color:var(--warn);font-weight:600}
+.tcrecent{margin-top:10px}
+.tcrecent summary{cursor:pointer}
+@media (prefers-reduced-motion:reduce){.tcbar i{animation:none}}

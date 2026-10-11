@@ -9,7 +9,7 @@
       <b class="dzname">Dez <i>AI</i></b>
       <span class="dzsay" id="dzSay">Draw a zone, press a key — the tag is made. Press <kbd>D</kbd>, drag over the text, then <kbd>P</kbd>.</span>
     </div>
-    <span class="dzstate {{ 'on' if env.ai_enabled else '' }}" title="Dez AI is the studio's own AI: a local model (Ollama) and a self-learning brain. Nothing leaves this server.">{{ 'ready' if env.ai_enabled else 'brain only' }}</span>
+    <span class="dzstate {{ 'on' if (env.ai_enabled or env.dez_offline) else '' }}" title="Dez AI is the studio's own AI: a self-learning brain that works offline, taught by Ollama (a local model). Nothing leaves this server.">{{ 'learning from Ollama' if env.ai_enabled else ('offline' if env.dez_offline else 'brain only') }}</span>
   </section>
   {% if not can_upload %}
   <section class="card qahero" id="qaHero">
@@ -77,7 +77,7 @@
     <div class="envrow">
       <span class="chip {{ 'ok' if env.tesseract else 'warn' }}">OCR: {{ ('Tesseract ' ~ env.tess_langs|join(', ')) if env.tesseract else 'Tesseract not found' }}</span>
       <span class="chip {{ 'ok' if env.verapdf else 'warn' }}">veraPDF: {{ 'ready' if env.verapdf else 'not configured' }}</span>
-      <span class="chip {{ 'ok' if env.ai_enabled else '' }}" title="Dez AI is the studio's own AI: a local model (Ollama) and a self-learning brain">Dez AI: {{ 'on' if env.ai_enabled else 'off' }}</span>
+      <span class="chip {{ 'ok' if (env.ai_enabled or env.dez_offline) else '' }}" title="Dez AI is the studio's own AI: a self-learning brain that works offline. Ollama (a local model) is its teacher: {{ 'on' if env.ai_enabled else 'off' }}">Dez AI: {{ 'on' if env.ai_enabled else ('offline' if env.dez_offline else 'off') }}</span>
       <span class="chip">v{{ env.version }}</span>
     </div>
   </section>

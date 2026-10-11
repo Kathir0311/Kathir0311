@@ -313,6 +313,30 @@
       <button class="sm" id="brRefresh" title="Load again">↻</button>
     </div>
     <div class="tiles ovtiles brtiles" id="brTiles">{% for i in range(6) %}<div class="tile skeleton"></div>{% endfor %}</div>
+    <!-- Ollama teaches Dez AI (V4.31) -->
+    <div class="card teachcard" id="teachCard">
+      <div class="dhead"><h3>🎓 Ollama teaches Dez AI</h3><div class="spacer"></div>
+        <span class="chip" id="tcState">…</span>
+        <button class="sm" id="tcHarvest" title="Read the finished files of this server once: what people decided in them (table header rows, link descriptions, table summaries) becomes Dez AI's lessons, and it studies them straight away">📚 Learn from the files here</button>
+        <button class="sm primary" id="tcTrain" title="Dez AI studies all its lessons again and measures how well it would have answered the ones it had not seen">⚙ Study now</button></div>
+      <p class="tiny muted" id="tcSub">Dez AI is the studio's own AI and works offline. Ollama is its teacher. Every answer Ollama gives is kept as a lesson; Dez AI answers by itself what it has learned, asks Ollama only what is new, and checks itself against Ollama now and then. What people decide in a file counts more than Ollama's answer.</p>
+      <div class="tiles ovtiles tctiles" id="tcTiles">{% for i in range(6) %}<div class="tile skeleton"></div>{% endfor %}</div>
+      <div class="lswitches">
+        <label class="switch"><input type="checkbox" data-teach="teach"><span class="knob"></span><span><b>Ollama's answers become lessons</b><i>every answer of Ollama is kept — the question, the answer, which model, which file</i></span></label>
+        <label class="switch"><input type="checkbox" data-teach="solo"><span class="knob"></span><span><b>Dez AI answers by itself what it has learned</b><i>a question it was taught is not put to Ollama again; a new one only when its student has proven itself against Ollama</i></span></label>
+        <label class="switch"><input type="checkbox" data-teach="offline"><span class="knob"></span><span><b>…also when Ollama is off or out of reach</b><i>Dez AI keeps working with what it has learned; what it has not learned stays unanswered, as before</i></span></label>
+        <label class="switch"><input type="checkbox" data-teach="fewshot"><span class="knob"></span><span><b>Dez AI shows Ollama how people here worded things</b><i>Ollama's question carries the answers people approved for the most similar items — what it writes follows the wording of this studio</i></span></label>
+      </div>
+      <div class="uprow tcnums">
+        <label title="1 in N of the questions Dez AI could answer alone is put to Ollama as well, and the answers are compared — the honest measure of the student. 0 = never">Check Dez AI against Ollama: 1 in<input type="number" data-teachn="audit" min="0" max="1000" step="1"></label>
+        <label title="How often a student's answers must agree with Ollama's on questions it had not seen">Student must agree<input type="number" data-teachn="agree" min="50" max="100" step="1"> %</label>
+        <label title="How sure a student must be of one answer to give it">…and be at least<input type="number" data-teachn="sure" min="50" max="99" step="1"> % sure</label>
+        <label title="Lessons a student needs before it can be proven">Lessons needed<input type="number" data-teachn="min_lessons" min="5" max="100000" step="5"></label>
+      </div>
+      <div class="tablewrap"><table class="list tctable" id="tcTable"><thead><tr><th>What Ollama is asked</th><th>Dez AI may</th><th>Lessons</th><th>Answered (7 days)</th><th>Dez AI’s student</th><th>Checked against Ollama</th><th></th></tr></thead><tbody></tbody></table></div>
+      <div class="tiny muted" id="tcNote"></div>
+      <details class="tcrecent"><summary class="small">What was taught lately</summary><div id="tcRecent" class="brins"><p class="small muted">Nothing yet.</p></div></details>
+    </div>
     <div class="dashrow two">
       <div class="card dcard"><div class="dhead"><h3>Learning curve</h3><div class="spacer"></div>
           <span class="tiny muted"><i class="legend-dot ap"></i> first-pass quality of approved files <i class="legend-dot up"></i> model accuracy (held-out)</span></div>

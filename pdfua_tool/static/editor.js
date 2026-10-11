@@ -174,7 +174,7 @@
     }
     fillRoleFilter();
     renderTree();
-    if (patched) drawBoxes(); else renderPage();
+    if (patched && imgWorkVer === workVer) drawBoxes(); else renderPage();      // (the picture is asked for again only when the PDF changed)
     renderInspector();
     if (window.LINKS) window.LINKS.modelLoaded(stage === 'links');
     if (window.READER) window.READER.modelLoaded();
@@ -487,7 +487,9 @@
     pageimg.addEventListener('error', done);
   }
   function pagewrapEl() { return document.getElementById('pagewrap') || pageimg.parentElement; }
+  let imgWorkVer = null;               // the version of the working PDF the page picture was asked for
   function loadPageImage() {
+    imgWorkVer = workVer;
     const out = $('showOut').checked && window.META.built;
     const next = `/job/${JID}/page/${page}.png?z=${Math.round(zoom * 1000) / 1000}${out ? '&v=out' : ''}&w=${workVer}`;
     if (pageimg.getAttribute('src') !== next) pagewrapEl().classList.add('loading');
@@ -1209,7 +1211,7 @@
   // counts for nothing. The seconds go to the server with the heartbeat, which keeps them per file and per person.
   const WORKCFG = window.WORK || { idle_limit: 120 };
   let lastInput = 0, workMs = 0, workShown = ((WORKCFG.work_s || 0) + (WORKCFG.qc_s || 0)) * 1000, workKind = WORKCFG.kind || 'work',
-    workCounts = true, moveAt = 0;
+    workCounts = !(window.READONLY || (window.LOCK && !window.LOCK.mine)), moveAt = 0;       // a person who only looks is not counted
   function noteInput() {
     const now = Date.now();
     if (document.hidden) { lastInput = 0; return; }
@@ -1492,6 +1494,7 @@
             e.target.disabled = false; e.target.textContent = 'Draft with AI';
             if (r.error) { UA.toast(r.error, 5000); return; }
             if (r.decorative) { UA.toast('The model thinks this image is decorative — consider marking it an artifact.', 5000); return; }
+            if (r.by && r.by.dez) UA.toast('Dez AI knew this picture — it remembered the description Ollama gave before', 4200);
             await load(n.id);
           }
         }),
@@ -2447,10 +2450,11 @@
     const facts = [];
     if (info.doc_type) facts.push(el('span', { class: 'chip', text: info.doc_type.replace(/_/g, ' ') }));
     if (info.changed) facts.push(el('span', { class: 'chip ok', text: `${info.changed} tag(s) decided by the brain` }));
-    if (info.ai_asked) facts.push(el('span', { class: 'chip', text: `${info.ai_asked} asked to the AI · ${info.ai_changed || 0} changed` }));
+    if (info.ai_asked) facts.push(el('span', { class: 'chip', text: `${info.ai_asked} asked to Ollama · ${info.ai_changed || 0} changed` }));
+    if (info.taught) facts.push(el('span', { class: 'chip', title: 'The tags Ollama chose are kept as lessons with the layout of each block: Dez AI\u2019s own model learns from them until a person has had the say', text: `\ud83c\udf93 ${info.taught} lesson(s) from Ollama` }));
     if (info.unsure) facts.push(el('span', { class: 'chip warn', text: `${info.unsure} to check (amber)` }));
     if (info.model && info.model.accuracy != null) facts.push(el('span', { class: 'chip', text: `model ${Math.round(info.model.accuracy * 100)} % accurate · ${info.model.examples} examples` }));
-    if (info.ai_error) facts.push(el('span', { class: 'chip err', title: info.ai_error, text: 'AI not reached' }));
+    if (info.ai_error) facts.push(el('span', { class: 'chip err', title: info.ai_error, text: 'Ollama not reached' }));
     const sim = (info.similar || []).map((x) => `${x.file} (${x.client}, ${Math.round(x.sim * 100)} %)`).join(' · ');
     const t = b.task || {};
     const btn = el('button', { class: 'sm primary', text: t.running ? 'Thinking…' : '🧠 Think again', disabled: !!t.running,
@@ -2487,7 +2491,7 @@
         const st = await UA.get(api('/brain/think'));
         if (st.running) { btn.textContent = `Thinking… ${Math.round((st.progress || 0) * 100)} %`; setTimeout(poll, 1500); return; }
         const res = st.result || {};
-        UA.toast(res.error ? res.error : `Brain: ${res.changed || 0} tag(s) changed${res.ai_asked ? `, ${res.ai_asked} asked to the AI` : ''} · confidence ${res.quality ?? '—'} %`, 6000);
+        UA.toast(res.error ? res.error : `Brain: ${res.changed || 0} tag(s) changed${res.ai_asked ? `, ${res.ai_asked} asked to Ollama` : ''} · confidence ${res.quality ?? '—'} %`, 6000);
         await load(focus);
         renderClient();
       };
@@ -2991,6 +2995,16 @@
   });
 
   // ------------------------------------------------------------------ AI
+  // V4.31 — who answered: Dez AI from what it learned, or Ollama (whose answer Dez AI keeps as a lesson)
+  function byNote(r) {
+    const b = r && r.by;
+    if (!b || !((b.dez || 0) + (b.ollama || 0) + (b.idle || 0))) return '';
+    const bits = [];
+    if (b.dez) bits.push(`Dez AI answered ${b.dez} by itself, from what it has learned`);
+    if (b.ollama) bits.push(`Ollama answered ${b.ollama}${b.dez ? '' : ''} — Dez AI keeps ${b.ollama === 1 ? 'it' : 'them'} as ${b.ollama === 1 ? 'a lesson' : 'lessons'}`);
+    if (b.idle) bits.push(`${b.idle} not answered (Ollama is off and Dez AI has not learned ${b.idle === 1 ? 'it' : 'them'} yet)`);
+    return el('p', { class: 'tiny muted dzby', text: '🎓 ' + bits.join(' · ') });
+  }
   $('aiBtn').addEventListener('click', () => { $('aiOut').replaceChildren(); $('aiDlg').showModal(); });
   $('aiAltAll').addEventListener('click', async (e) => {
     e.target.disabled = true;
@@ -3020,8 +3034,8 @@
     const r = await UA.post(api('/ai/roles'));
     e.target.disabled = false;
     if (r.error) { $('aiOut').replaceChildren(el('p', { class: 'small', text: r.error })); return; }
-    if (!r.suggestions.length) { $('aiOut').replaceChildren(el('p', { class: 'small', text: 'The model agrees with every tag.' })); return; }
-    $('aiOut').replaceChildren(...r.suggestions.map((s) => el('div', { class: 'sugg' },
+    if (!r.suggestions.length) { $('aiOut').replaceChildren(el('p', { class: 'small', text: 'The model agrees with every tag.' }), byNote(r)); return; }
+    $('aiOut').replaceChildren(byNote(r), ...r.suggestions.map((s) => el('div', { class: 'sugg' },
       el('span', { class: 'role', text: s.from }), '→', el('span', { class: 'role h', text: s.to }),
       el('span', { class: 'ntext', text: `p${s.page + 1}: ${s.text}` }), el('span', { class: 'tiny muted', text: s.why }),
       el('button', { class: 'sm', text: 'show', onclick: () => { $('aiDlg').close(); selectOnly(s.id, true); } }),
@@ -3049,8 +3063,8 @@
       e.target.disabled = false;
       if (r.error) { $('aiOut').replaceChildren(el('p', { class: 'small', text: r.error })); return; }
       const list = r.suggestions || [];
-      if (!list.length) { $('aiOut').replaceChildren(el('p', { class: 'small', text: none })); return; }
-      $('aiOut').replaceChildren(...list.map((s) => el('div', { class: 'sugg' },
+      if (!list.length) { $('aiOut').replaceChildren(el('p', { class: 'small', text: none }), byNote(r)); return; }
+      $('aiOut').replaceChildren(byNote(r), ...list.map((s) => el('div', { class: 'sugg' },
         el('span', { class: 'role', text: String(s.from).slice(0, 28) }), '→',
         el('span', { class: 'role h', text: String(s.to).slice(0, 90) }),
         el('span', { class: 'ntext', text: `p${s.page + 1}: ${s.text || ''}` }),

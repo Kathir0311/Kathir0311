@@ -20,6 +20,8 @@ import tempfile
 
 import pymupdf
 
+import tempfile as _tf  # noqa: E402
+os.environ.setdefault("PDFUA_SAMPLES", _tf.mkdtemp(prefix="pdfua_samples_"))   # V4.31: Ollama's answers are kept as lessons — not in the project folder
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import core.ai as ai                                 # noqa: E402
 from core import edit                                # noqa: E402

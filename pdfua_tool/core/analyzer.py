@@ -4353,6 +4353,11 @@ def _analyze_chunk(path: str, opts_d: dict, ai_d: dict | None, shared: dict,
     out = {"model": a.model.to_json(), "headings": [h.id for h in a.heading_nodes], "zones": a.zone_log or []}
     a.doc.close()
     a.pdf.close()
+    try:                                  # V4.31: how Dez AI and Ollama shared the questions of these pages
+        from .teacher import flush_counts
+        flush_counts()
+    except Exception:
+        pass
     return out
 
 

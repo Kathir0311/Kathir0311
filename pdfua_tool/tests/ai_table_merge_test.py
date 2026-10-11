@@ -8,6 +8,8 @@ import threading
 
 import pymupdf
 
+import tempfile as _tf  # noqa: E402
+os.environ.setdefault("PDFUA_SAMPLES", _tf.mkdtemp(prefix="pdfua_samples_"))   # V4.31: Ollama's answers are kept as lessons — not in the project folder
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from core.ai import AIConfig                 # noqa: E402
@@ -75,7 +77,10 @@ def main():
         srv.calls.clear()
         analyze(f, Options(ai_table_merge=False), ai_cfg=cfg)
         assert not srv.calls
-        # 6. server down -> falls back to rules, no crash
+        # 6. server down -> falls back to rules, no crash (V4.31: what Dez AI was taught by the answers above would be
+        #    answered without the server — forget it, so this asks)
+        from core import teacher
+        teacher.forget("table_merge")
         bad = AIConfig(base_url="http://127.0.0.1:9", enabled=True, timeout=2)
         m = analyze(f, Options(ai_table_merge=True), ai_cfg=bad)
         assert len(tables(m)) == 2 and any("AI table merge check stopped" in w for w in m.warnings)

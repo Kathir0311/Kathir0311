@@ -48,6 +48,11 @@ def run(job_dir: str, client: str = "", by: str = "", reviewer: bool = False, zo
             out["memory"] = memory.learn(job_dir, client, model, auto, verified=False)
         except Exception as exc:
             out["memory"] = {"error": str(exc)[:200]}
+    try:                                       # V4.31: what people decided becomes Dez AI's lessons
+        from . import teacher
+        out["teacher"] = teacher.learn_job(job_dir, client, model, auto, verified=False)
+    except Exception as exc:
+        out["teacher"] = {"error": str(exc)[:200]}
     if zones:
         try:
             out["zones"] = zonelearn.record_job(job_dir, client, model, auto, by=by, reviewer=reviewer)

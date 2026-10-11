@@ -510,6 +510,15 @@ def _home_for(model: DocModel, made: list[StructNode], node: StructNode) -> Stru
     return None
 
 
+def _dez_offline() -> bool:
+    """Ollama is off — has Dez AI learned how reference lists are split? (V4.31)"""
+    try:
+        from .teacher import offline_knows
+        return offline_knows()
+    except Exception:
+        return False
+
+
 def tag_bibliography(model: DocModel, doc, page_lines: list, opts=None, ai_cfg=None,
                      heads: list[str] | None = None) -> dict:
     """Re-tag every reference list in the document (or the ones under `heads`)."""
@@ -519,7 +528,7 @@ def tag_bibliography(model: DocModel, doc, page_lines: list, opts=None, ai_cfg=N
         return _to_pdf(doc[pno], box)
 
     mode = str(getattr(opts, "bibliography_as", "list") or "list") if opts is not None else "list"
-    use_ai = bool(ai_cfg is not None and getattr(ai_cfg, "enabled", True)
+    use_ai = bool(ai_cfg is not None and (getattr(ai_cfg, "enabled", True) or _dez_offline())
                   and (opts is None or getattr(opts, "ai_bibliography", False)))
     stats = {"sections": 0, "entries": 0, "replaced": 0, "methods": []}
     for sec in reference_sections(model):

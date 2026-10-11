@@ -1,4 +1,4 @@
-# Dezquare PDF Accessibility Studio v4.29.0
+# Dezquare PDF Accessibility Studio v4.31.0
 
 Automated PDF/UA-1 tagging plus an Acrobat-style manual tag editor.
 
@@ -1381,6 +1381,14 @@ python tests/multiuser_test.py         # V4.28.0 many people at once: the lock, 
 python tests/filelock_test.py          # V4.29.0 one person at a time in a file: the others look, every change is refused (423), take over, let go, expiry, the switch
 python app.py & python tests/ui_front_test.py    # V4.29.0 the front page in a browser: the demo, the moving parts and their pause, light / dark, a phone, signing in
 python app.py & python tests/ui_lock_test.py     # V4.29.0 two people, one file, in two browsers: view only, take over, let go, leaving
+python tests/patch_test.py             # V4.30.0 what an edit changed is written, told and shown: the patches equal a new load after 26 kinds of change, the file is exactly the tags, 304 / gzip, the lists of files
+python tests/perf_test.py              # V4.30.0 speed: a file of 4 000 tags edited in tens of milliseconds, the heartbeat answers during edits, 1 500 files listed in a blink and with a 304
+python tests/worktime_test.py          # V4.30.0 working time: only active seconds, Working and QC apart, never more than has passed, the idle limit, the lists, the report, the CSV
+python tests/rights_test.py            # V4.30.0 rights: role defaults, Allow / Deny, refused on the server with the reason, see all, take over, who spent the time
+python app.py & python tests/ui_admin_test.py    # V4.30.0 Admin in a browser: filters and chips, Reset, views kept, the working time, the Rights dialog, Time, Workflow, Activity
+python app.py & python tests/ui_users_test.py    # V4.30.0 the Users page: filters, chips and Reset, rows kept between draws, 150 rows at a time, the upload chips, the person's time
+python tests/teacher_test.py           # V4.31.0 Ollama teaches Dez AI: lessons, answers alone, proven students and audits, people outrank the teacher, Ollama off, the Admin API
+python app.py & python tests/ui_teacher_test.py   # V4.31.0 Admin → Dez AI → Ollama teaches Dez AI in a browser: the card, Study now, levels, switches, lessons, forget
 python app.py & python tests/ui_zone_test.py     # V4.28.0 a zone cut by hand → the offer “Cut all N”, Admin → System and Dez AI
                                                  # (the browser tests take a Chromium you already have from PW_CHROMIUM=/path/to/chromium)
 python app.py & python tests/api_test.py && python tests/ui_test.py /tmp
@@ -1423,6 +1431,11 @@ core/livelearn.py   the learner process: what people changed in a file, learned 
 core/locks.py       the one-at-a-time lock that serves the waiting in the order they came (V4.28)
 core/fairqueue.py   the work queue that serves each person in turn (V4.28)
 core/editlock.py    one person at a time in a file — the others look (V4.29)
+core/modelsync.py   what an edit changed: a copy of the tags, the difference, the file written from kept pieces (V4.30)
+core/jobindex.py    every file's meta, read once and kept — a list of files opens nothing (V4.30)
+core/worktime.py    how long people really work on a file: active seconds, Working and QC (V4.30)
+core/rights.py      what a person may do on top of the role (V4.30)
+core/teacher.py     Ollama teaches Dez AI: the gate, the lessons, the students, the audits (V4.31)
 core/inventory.py   everything in the PDF, and what no tag holds (V4.26)
 core/kb.py          the offline rule book (V4.26)
 core/netguard.py    the privacy guard: nothing leaves the server (V4.26)
@@ -2656,3 +2669,198 @@ zone story, the lane, the numbers, the words, the pause kept, light / dark, less
 from another server) and `tests/ui_lock_test.py` (two admins in two browsers: view only, the refused hotkey, the file list, take over
 seen by the other, the change of the one who works shown to the one who looks, let go, leaving). `api_test.py` and `ui_test.py` run
 through against a running server.
+
+
+**V4.30.0 — A big file stays quick, the working time of every file, rights, and filters you can clear.**
+
+*1. Why a changed tag took seconds — and what is different now.* Measured on a 300-page book of 5 087 tags (headless Chromium
+on a 4-core machine, which is slower than yours): a **role change by hotkey took 8.9 s** to show, a **delete 9.4 s**, an undo
+2.1 s, clicking a tag in the tree 0.3 s, a page turn 0.45 s. The causes were in the editor and the server, not in the PDF:
+
+| What happened at every change | What happens now |
+|---|---|
+| the editor asked for the whole file (3 MB), the issues, the colours and the cross-references, **one after the other**, and drew every one of the 5 000 rows of the tag tree again (the browser then laid the whole page out twice: ~0.7 s) | the answer to a change **carries what it changed** (a patch of 1–2 KB); the editor changes those tags and **those rows** — a row is made again only when what it shows changed — and asks for the issues a moment later, in the background |
+| the server wrote **the whole file** again (80 ms for 5 000 tags) | a copy of the tags (core/modelsync.py) is compared with the live tags (dictionary against dictionary, in C): only the tags that changed are written again — the text of every other tag is kept and joined (~10 ms) |
+| every list of files — the Users page, the **queue badge each open tab asks for every 45 s**, Admin — opened and parsed the meta.json of **every file** (200 ms for 2 000 files, on one Python thread that everybody's edits share) | every file's meta is read once and kept (core/jobindex.py); a list costs a look at the folder at most every 4 s, and the writer says which file it changed. 2 000 files: 200 ms → 20 ms; the answers carry an ETag and are 304 (1 ms) when nothing changed |
+| the panels' reads (colours, cross-references, page numbers, marks, tidy lists …) waited for the **one-at-a-time PDF lock** that a page being drawn or a zone being cut holds | they read the tags and never open the PDF: they wait for nothing but their own file |
+| passing over tags with the arrow keys asked the server about each of them — and every answer **held the PDF for everybody** | the question is asked when the person stays on a tag (0.3 s), and not at all for a tag asked about before; the “learned from your fix” offer after a pause in the changes |
+| the zone offer (“Cut all N”) read the file's proposal from disk and compared every pair of lines one by one (400 ms, on the file's lock) | the proposal is kept, the comparison is one step per page (numpy), the answer is kept for each version of the file (400 → ~70 ms, then 1 ms) |
+| the learner (live learning) competed with the web server for the processor | it runs below the server's priority |
+
+After (same file, same machine): a **role change shows in 0.13 s** (0.32 s until even the issues are fresh), a **delete 0.27 s**, an
+undo 0.32 s, clicking a tag 0.04 s, a page turn 0.006 s, opening the editor 1.4 s instead of 2.5 s. In-process, a change of one tag
+in a file of 4 000 tags answers in ~55 ms (before: ~120 ms for the write alone, then ~450 ms of asking again) and the answer is
+1.5 KB; the editor's heartbeat answers in ~30 ms **while** somebody edits; a server of 1 500 files lists them in 5 ms the second time.
+
+How it works, for whoever reads the code:
+* `mutate()` (every change of the tags goes through it) takes a snapshot for undo — now a **hard link** to the file, not a copy — runs the
+  edit, compares the tags with the copy, writes the file from the kept pieces, and leaves the patch in `g.patch`; an `after_request`
+  hook adds `"patch"` to the JSON answer. A patch is `{base, rev, nodes, removed, derived, top, can_undo, can_redo, geom}`; the
+  editor applies it only when its `rev` is the patch's `base` (anything else — another person's change, a page split — and it asks
+  for the whole file, as before). More than 400 changed tags (a whole page re-tagged) is told as `reload`.
+* The reading numbers shown in the tree are the one global thing an edit can move (a delete renumbers everything after it): the patch
+  lists the ones that moved, and a leaf tag that only changes its role does not renumber anything. The reading *order* is the walk
+  through the tree — the editor works it out itself.
+* `GET /model`, `/lint` and the zone offer are built once for each version of the file and compressed once; `rev` is the file's date
+  and a count of changes, so two saves in the same instant cannot look the same. Pages, answers and scripts travel **gzip** to a
+  browser that accepts it (a 3.4 MB list of 5 000 tags is ~230 KB on the wire — what people on Wi-Fi or a VPN feel), and scripts and styles
+  (`?v=`) are kept by the browser for a year instead of being asked about at every page.
+* Writing `meta.json` (“last edited by”) for every change is at most once in 2 s while the file is already marked changed.
+* **Nothing about the files changed**: `model.json`, the history, the PDFs, the reports are the same; an older browser tab simply
+  asks for the whole file.
+
+*2. Working time — Working and QC, break time left out (`core/worktime.py`).* The editor of a person who works counts the seconds in
+which something was done in it — a key, a click, a drag, the wheel, a move of the mouse. A pause between two such moments shorter
+than the **break limit** (Admin → Workflow → *Break after*, 2 minutes by default, 30 – 900 s) is thinking and counts; a longer one
+is a break and counts for nothing — and a hidden tab counts for nothing. The seconds go with the editor's heartbeat (`/presence?…&w=`);
+the server never counts more than has passed since the person's last report. They count for the person **working in the file** (the
+holder of the lock; with the lock off, whoever may change it) — not for somebody who only looks. **Working** is the time while the
+file is in production (and rework), **QC** while it is with QA or Final QA.
+* The editor shows **⏱ 12 min** (⏸ while paused) beside the lock chip; the Users page shows the person's own time on every row (and
+  the team's total to an admin or whoever has the right); **Admin → Files** has a **Time** column (Working · QC, who spent it in the
+  tooltip and in the file's details) and the CSV has *working time (min)*, *QC time (min)* and *time by*.
+* **Admin → Time**: today / 7 / 14 / 30 / 90 days, one person or everybody — the tiles, day by day, who, a table (average per active
+  day), and an export (.csv) of person × day. The Overview has a tile “worked today”.
+* Kept in the file's meta.json (`time`, so the lists have it for nothing) and, day by day, in `worktime.json` next to it; written at
+  most every 30 s per file and when the server stops (a crash loses up to 30 s). The pages show what is counted and not yet written.
+
+*3. Rights (`core/rights.py`).* The role says what a person does in the workflow; a **right** is one thing on top of it that an admin
+gives or takes away: **upload**, **analyse again / change the profile / auto-tag**, **delete files**, **build**, **download**, **use the
+AI helpers**, **see every file (look only)**, **take over a file** from whoever has it, **see who spent the working time**. Each has the
+role's default (so nothing changes until an admin makes an exception); a person's own **Allow / Deny** wins; an admin always may.
+Admin → Users → *Rights* shows every right with the default of the role, the person's setting and what is in force; the Users table
+says “role defaults” or “N custom”. The server refuses what a person has no right to (403 with the reason — “You have not been given
+the right to: delete files. Ask an admin.”), the pages do not offer it (no Build button, no download links, no upload box), and it is
+logged. *See every file* lets a person open any file and read it; changing it stays with whoever has it at its step.
+
+*4. Admin → Files: filters you can see and clear.* **↺ Reset filters** (disabled while nothing is on; it also puts the sort back) and
+the empty state's own reset; every filter in use is a **chip** with its own ✕; **⚙ More filters**: uploaded / due dates, overdue only,
+pages from – to, errors left, working time ≥ and QC ≥ minutes, worked on by, nobody has worked on it, QA / Final QA, being edited
+now, open comments, in rework, built / not built / changed since the build; **saved views** (a set of filters under a name) and the
+filters of the last visit are kept in the browser; sorts by edited lately, most / least working time and most errors; **Export these**
+(the list as shown, with the times); `/` goes to the search, Esc clears it; **200 rows are drawn at a time** (“Show 200 more”) and “all N
+that match are selected” says so when more match than are drawn. The Users page's file list has the same chips, **↺ Reset**, the empty
+state, and 150 rows at a time; Admin → Activity has a Reset.
+
+*5. Calmer, livelier pages.* The Users page keeps its rows between draws (a row is made again only when its file changed, and only
+the bar of a file being analysed moves — before, the whole list **and its entrance** were drawn again every second and a half, and
+the dashboard replayed its count-up); the upload card shows the chosen files as chips (each can be taken out) with a bobbing arrow when
+a file is dragged over it; the filter bars stick under the header with a shadow when the list is scrolled; cards slide in as they come
+into view; chips pop; panels unfold; the tabs of Admin fade in; a progress bar flows; the Admin tab Time draws its days. Everything
+moves with `transform` / `opacity` only, and **nothing moves** when the computer's “reduce motion” is on. Admin → System shows what
+keeps it quick (files known and how often they were read, copies of tags in memory, answers kept).
+
+*Honest limits.* The first change after the server starts (or after a file has been out of the memory's 24 files) pays for making the
+copy of the tags (~0.2 s for 5 000 tags; it is made while the editor opens, so usually nobody waits; it is made afresh every 500 changes as a safety net); an **undo** still reads the
+older file (~0.15 s for 5 000 tags — then it is a patch like the rest); a person who only **looks** reloads the whole file when it
+changes (it is built once for everybody and a 304 for the rest). The numbers above are one machine's: they show where the time
+went, not what yours will be. Working time is what the **editor** reports — time spent reading the PDF in another program, or on the
+phone, is not work in the file, and a person who reads for longer than the break limit without touching anything is, by that rule,
+on a break; it is a measure of activity, not a time sheet to pay by. Rights narrow or widen what a role may do; they are not a
+security boundary against somebody with access to the server's files. A list of files reads the folder every 4 s at most, so a file
+copied into the folder by hand shows within a few seconds.
+
+Checked: every test suite of V4.29 passes as it was; new `tests/patch_test.py` (the copy finds a changed field, a list or a dictionary
+changed in place, a tag added, a tag gone, the file's own fields; the file written from the pieces is the file `DocModel.to_json()`
+writes; then **26 kinds of change** — role, language, alt text, the title, move, indent, bulk, undo, redo, a zone, levels, delete with
+and without children, a list, a table, a zone delete — through the app, each time the patched tags equal a new load, field by field;
+a change made outside `mutate()` is found by the next one; 304, gzip, versioned scripts, the lists of files), `tests/perf_test.py`
+(budgets: a file of 4 000 tags edited in tens of milliseconds with a 1.5 KB answer, the heartbeat while edits go on, 1 500 files
+listed again for nothing, the 304s), `tests/worktime_test.py`, `tests/rights_test.py`, `tests/ui_admin_test.py` and
+`tests/ui_users_test.py` (in a browser: the filters, chips, Reset, views kept, rows kept between draws, 150 at a time, the upload chips,
+the Rights dialog, Time, Workflow, Activity). `api_test.py` and `ui_test.py` run through against a running server.
+
+---
+
+**V4.31.0 — Ollama teaches Dez AI: every answer is a lesson, and Dez AI answers by itself what it has learned.**
+
+Two AIs work in this tool, and they are not the same thing.
+
+* **Dez AI** is the studio's own AI — the part that lives in the program and learns: the brain, the memory, the learned code, the zone
+  models. It needs no model server; it works offline, in milliseconds.
+* **Ollama** is its teacher: a large language / vision model on a server. It can answer almost anything, but it takes seconds to minutes
+  on a CPU, and it forgets every answer the moment it has given it.
+
+V4.31 makes the teacher help the student, so Dez AI needs the teacher less every week and still has it when something is new.
+
+*1. The gate.* Every question the tool puts to Ollama — 19 kinds, from “is row 1 a header?” to “which line starts a reference entry?” — now
+goes through a gate (`core/teacher.py`, wrapped around the task functions of `core/ai.py`, so the analysis, the editor and the worker
+processes all use it). The gate
+
+1. asks **Dez AI first**: has it been taught this? A question it has been asked before is answered from its lessons; a *new* question of a
+   kind it has learned well is answered by a small trained model of its own, a **student** — but only a student that has *proven* itself;
+2. otherwise asks **Ollama**, as before, and **keeps the answer as a lesson**: the question in a compact form, the answer, the model that
+   gave it, the file and the client it was about. The next question of that kind may not need Ollama at all;
+3. now and then (1 in 12 by default) asks Ollama a question Dez AI *could* have answered alone, and compares the two — the honest measure
+   of the student.
+
+*2. What Dez AI learns from Ollama's answers.*
+
+| Ollama is asked … | Dez AI learns |
+|---|---|
+| is row 1 of a table a header? · does a table go on over the page break? · are these two parts really one? | a **student** (yes / no, or choice) from the shape of the rows, the titles, the header rows, the layout hints |
+| which line starts a reference entry? · which line starts a list item? | a **student for lines**: from the first words, the punctuation, the line before and after |
+| the label of a form field | a **rule** found in the lessons: “for a text field with text to its left, the label is that text” (per kind of field, with its record) |
+| what to say for a link · a one-sentence table summary · a cross-reference | the **answer for exactly that question** (the same link text and address, the same caption and header …) |
+| alt text · a formula read aloud · a drawn zone · the reading order of a page | the answer for **the same picture** — also at another size, by a look-alike fingerprint (128 brightness steps and a 4 × 4 grid; a flat block of one colour has none) |
+| the tags of the brain's doubtful text blocks | each tag Ollama chose, **with the layout of the block**, trains the brain's own model — with a low weight (0.35 × how sure Ollama was) until a person has had the say |
+
+*3. Proven, not trusted.* Each kind of question has a **level**, chosen from the evidence (or fixed by an admin):
+**watch** (Ollama answers, the answer is only kept) → **recall** (also answers what it has been asked before) → **solo** (also answers *new*
+questions with its student). A student reaches *solo* only when, in cross-validation **over the lessons it was not trained on**, its answers
+agree with Ollama's ≥ 95 % of the time at the confidence it needs to speak (≥ 90 % sure by default), with at least 30 lessons — and it
+loses the duty by itself when its **audits** (1 in 12 answers asked to Ollama as well) fall below that. A student is trained again when its
+lessons have grown by a tenth, in a process of its own below the web server's priority (a person's next click is never slower because Dez
+AI is studying).
+
+*4. People outrank the teacher.* What people leave in a built or approved file — a table's header rows, a link's description, a table's
+summary — is a **human lesson** (weight 4 against Ollama's 1): the lessons Ollama gave for the same question are marked *confirmed* (the
+person kept the answer) or *corrected* (the person changed it — it is never used again), which also gives the honest **“Ollama was right
+N %”** per kind of question. An untouched answer in a *built* file is silence, not consent; an *approved* file confirms. **📚 Learn from the
+files here** reads the finished files of the server once and learns what people decided in them. Ollama's tags for the brain are judged the
+same way: a tag a person changed stops training the model, a tag in an approved file is confirmed (and then the sample rows say it better).
+
+*5. Dez AI helps Ollama, too.* For the questions that need the studio's wording (a link's description, a form field's label, a table's
+summary), the question to Ollama carries the **answers people approved for the most similar items** — so what Ollama writes follows how this
+studio words it, and a person has less to change.
+
+*6. Ollama off, or out of reach.* The Settings box is now “**Ask Ollama (the teacher)**”. Switched off, nothing new is asked — and Dez AI
+still answers what it learned (the analysis passes it on to the workers, the editor's helpers use it, reference lists are split by its
+student); what it has not learned stays unanswered, as it always did, with a clear message. (Admin can switch this off: *also when Ollama is
+off*.)
+
+*7. Admin → 🧠 Dez AI → **Ollama teaches Dez AI**.* One card: **Dez AI answers alone** (% of the questions of the last 7 days), **lessons
+kept** (how many from people), **Ollama questions saved** (and about how much waiting that was — measured on Ollama's own answering times
+here), **students proven**, **Ollama was right** (the tags, judged by approved files), **tags taught**; four switches (lessons, answers
+alone, also when Ollama is off, examples for Ollama); the audit rate, the agreement a student must reach, how sure it must be, the lessons
+it needs; and **a row for every kind of question** — what Dez AI may do (Automatic, Off, Watch, Recall, Solo), the lessons (how many from
+people, ✓ confirmed, ✗ changed, “Ollama right N %”), who answered in the last 7 days, the student's marks (right on unseen questions,
+coverage, proven or learning) and its audits against Ollama. A row opens to show its lessons (who taught it, which model, when); a task's
+lessons can be forgotten (all, Ollama's only, or the ones people changed). **⚙ Study now** trains the students; **📚 Learn from the files
+here** reads the finished files. The Users page says “Dez AI: learning from Ollama” (or “offline”), the editor's AI helpers say who
+answered (“Dez AI answered 5 by itself, from what it has learned · Ollama answered 2 — Dez AI keeps them as lessons”). Command line:
+`python cli.py --teacher-status`, `--teacher-train`; `python -m core.teacher status | train | harvest | forget <task>`.
+
+*8. Where it lives.* In the sample database (`sample_files/samples.db`, in **⤓ Database backup**): `lessons`, `teach_days` (counts per
+day), `teach_audit`, `students`, `teacher_roles`. Nothing leaves the server; the lessons hold the same kind of text the sample files do,
+and only admins can read them. Writers are many (every worker process, every request): a lesson is one short write, never waited for for
+more than 3 s, never worth a stall; the daily counts are buffered and written every 3 s.
+
+*Honest limits.* A lesson is only as good as Ollama's answer until a person has judged it — which is why the students must prove
+themselves against Ollama *and* people's decisions weigh more; a student agrees with Ollama on the kind of question it saw, so it also
+repeats Ollama's habits where nobody has corrected them. The picture memory answers a picture it has seen (also smaller or larger), not
+one that merely looks similar to a human eye; a flat block of colour is never remembered. Generating text (link descriptions, summaries,
+alt text) is remembered, not generalised: Dez AI does not write new sentences, it reuses Ollama's and people's. “Time saved” is
+Ollama's measured answering time × the questions Dez AI answered (a guess of 6 s / 20 s until Ollama has been timed here). The brain's tag
+decisions stay as in V4.25–4.27: Ollama's tags only add low-weight training rows for it.
+
+Checked: every test suite of V4.30 passes (the AI tests now keep their lessons in a folder of their own); new `tests/teacher_test.py`
+(a stand-in Ollama whose answers follow rules the students can find: a link answered once and never again, even with other words around
+it; the switches and levels; a header-row student proven on 70 lessons and then answering 40 new questions alone with at most 2 asked, 39
+or 40 right; audits 1 in 2 and a student taken off duty when they disagree, back when they agree; the form-field rule; reference lists
+split alone; “the table goes on” alone; the same picture described once, also at twice the size, another picture and a non-picture
+passed on; Ollama off; a person's words used and Ollama's lessons confirmed / changed; the brain's tags with little weight, judged by a
+built and an approved file; the examples in Ollama's question; four processes writing 160 lessons at once; the Admin API, refused for
+a production user; the editor's helpers saying who answered), `tests/ui_teacher_test.py` (the card in a browser: a row for every kind of
+question, the tiles, Study now → a proven student, a level held back and kept after a reload, the switches and numbers, a task's lessons
+opened and forgotten).

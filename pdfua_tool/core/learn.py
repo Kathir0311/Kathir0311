@@ -113,6 +113,11 @@ def connect() -> sqlite3.Connection:
         brain.ensure(c)
     except Exception:
         pass
+    try:                                   # V4.31: Ollama's lessons to Dez AI
+        from . import teacher
+        teacher.ensure(c)
+    except Exception:
+        pass
     return c
 
 

@@ -169,6 +169,14 @@ def main() -> int:
     got = {n.text: n.role for n in mdl.nodes.values() if n.text in sum(NEW, [])}
     ok(out["ai_asked"] >= 3 and out["ai_changed"] == 3 and set(got.values()) == {"H2"},
        f"the AI decided the doubtful tags {out.get('ai_asked')} {out.get('ai_changed')} {got} {out.get('ai_error')}")
+    # V4.31: the tags Ollama chose are Dez AI's lessons, with the layout of each block
+    from core import teacher
+    with learn.connect() as c_:
+        taught = [dict(r) for r in c_.execute("SELECT text, role, accepted, size_rel, caps FROM teacher_roles WHERE client='Journal X'")]
+        ok(len(taught) >= 3 and all(t["role"] == "H2" and t["accepted"] == 1 for t in taught if t["text"] in sum(NEW, [])),
+           f"Ollama's tags are kept as lessons with their layout {taught[:3]}")
+        ok(len(teacher.role_rows(c_)) >= 3, "…and train the brain's model (little weight, until a person has judged them)")
+    ok(out.get("taught", 0) >= 3, f"the brain's summary says how many it was taught {out.get('taught')}")
     # with the samples, the question carries the nearest finished examples and the client's rules
     mdl = load_model(job2)
     for n in mdl.nodes.values():

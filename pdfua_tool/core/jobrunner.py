@@ -143,6 +143,11 @@ def _child(job: str) -> int:
         with open(os.path.join(job, "task.json"), encoding="utf-8") as fh:
             t = json.load(fh)
         opts = Options.from_dict(t.get("options"))
+        try:                                       # V4.31: the lessons Ollama gives here belong to this file
+            from core import teacher
+            teacher.set_context(os.path.basename(os.path.normpath(job)), getattr(opts, "client", "") or "")
+        except Exception:
+            pass
         if t["kind"] == "prepare":
             ai = t.get("ai")
             cfg = AIConfig(**{k: v for k, v in ai.items() if k in AIConfig().__dict__}) if ai else None
@@ -178,6 +183,11 @@ def _child(job: str) -> int:
     except Exception as exc:
         out = {"ok": False, "error": f"{exc}", "trace": traceback.format_exc()[-4000:]}
         traceback.print_exc()
+    try:
+        from core.teacher import flush_counts
+        flush_counts()
+    except Exception:
+        pass
     with open(rpath + ".tmp", "w", encoding="utf-8") as fh:
         json.dump(out, fh, default=str)
     os.replace(rpath + ".tmp", rpath)

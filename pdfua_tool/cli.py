@@ -8,6 +8,8 @@ Examples
   python cli.py --list-options
   python cli.py --brain-status                # V4.25: what the self-learning brain knows
   python cli.py --brain-train                 # train the brain again on every sample and fix
+  python cli.py --teacher-status              # V4.31: what Ollama has taught Dez AI, and what Dez AI answers alone
+  python cli.py --teacher-train               # Dez AI studies its lessons again
 """
 from __future__ import annotations
 
@@ -69,6 +71,8 @@ def main(argv=None) -> int:
     ap.add_argument("--list-options", action="store_true")
     ap.add_argument("--brain-status", action="store_true", help="V4.25: what the self-learning brain has learned")
     ap.add_argument("--brain-train", action="store_true", help="V4.25: train the brain again now")
+    ap.add_argument("--teacher-status", action="store_true", help="V4.31: what Ollama has taught Dez AI")
+    ap.add_argument("--teacher-train", action="store_true", help="V4.31: Dez AI studies its lessons again now")
     a = ap.parse_args(argv)
     try:
         from core import netguard                  # V4.26: nothing leaves the server
@@ -76,6 +80,21 @@ def main(argv=None) -> int:
     except Exception:
         pass
 
+    if a.teacher_status or a.teacher_train:
+        from core import teacher
+        if a.teacher_train:
+            r = teacher.train_all(force=True)
+            for t in r.get("tasks", []):
+                print(f"  studied {t.get('task')}: {t.get('n')} lesson(s), right on unseen {round((t.get('acc') or 0) * 100)} %, "
+                      f"covers {round((t.get('cov') or 0) * 100)} % — {'proven' if t.get('ready') else 'not proven yet'}")
+        s = teacher.status()
+        t = s["totals"]
+        print(f"lessons: {t.get('lessons', 0)} ({t.get('human', 0)} from people) · Dez AI answered {t.get('dez', 0)} alone, "
+              f"Ollama {t.get('ollama', 0)} · last 7 days: {round((t.get('alone') or 0) * 100)} % alone · students proven {t.get('students', 0)}/{t.get('trainable', 0)}")
+        for r in s["tasks"]:
+            if r["lessons"] or r["dez"] or r["ollama"]:
+                print(f"  {r['label'][:52]:52} {r['level']:7} {r['lessons']:5} lessons  Dez AI {r['dez']:5}  Ollama {r['ollama']:5}")
+        return 0
     if a.brain_status or a.brain_train:
         from core import brain
         if a.brain_train:
