@@ -392,7 +392,50 @@ def _owner(nodes: list, x: float, y: float, pad: float = 1.5):
 
 def joined_now(model, pairs: dict) -> "list[int]":
     """For every pair: 1 = a new tag starts between the lines, 0 = one tag holds both,
-    -1 = cannot tell (a line is in no text tag, or in a list, a table …)."""
+    -1 = cannot tell (a line is in no text tag, or in a list, a table …).
+
+    V4.30: all the pairs of a page against all its tags in one step (numpy) — a 300-page book took ~300 ms of one
+    Python thread for this, which the editor asked for after every zone cut and the learner for every edit.
+    The answer is the one `_joined_now_py` gives."""
+    np = _np()
+    if np is None:
+        return _joined_now_py(model, pairs)
+    by_page = _text_nodes(model)
+    page = np.asarray(pairs["page"]).astype(int)
+    box = np.asarray(pairs["box"], dtype=np.float64)
+    out = np.full(len(page), -1, dtype=np.int64)
+    pad = 1.5
+    for pg in np.unique(page):
+        nodes = by_page.get(int(pg))
+        if not nodes:
+            continue
+        idx = np.nonzero(page == pg)[0]
+        R = np.asarray([e[0] for e in nodes], dtype=np.float64)                       # k x 4
+        area = np.asarray([e[2] for e in nodes], dtype=np.float64)
+        pri = np.asarray([e[3] for e in nodes], dtype=np.float64)
+        ok = np.asarray([e[4] for e in nodes], dtype=bool)
+        owner = {id(e[1]): j for j, e in enumerate({id(e[1]): e for e in nodes}.values())}
+        who = np.asarray([owner[id(e[1])] for e in nodes], dtype=np.int64)
+        order = np.lexsort((np.arange(len(nodes)), area, -pri))                       # best first, ties: as listed
+        R, ok, who = R[order], ok[order], who[order]
+        b = box[idx]
+        ends = []
+        for (xa, ya) in ((0, 1), (2, 3)):
+            x = (b[:, 0 if xa == 0 else 4] + b[:, 2 if xa == 0 else 6]) / 2
+            y = (b[:, 1 if ya == 1 else 5] + b[:, 3 if ya == 1 else 7]) / 2
+            inside = ((x[:, None] >= R[None, :, 0] - pad) & (x[:, None] <= R[None, :, 2] + pad)
+                      & (y[:, None] >= R[None, :, 1] - pad) & (y[:, None] <= R[None, :, 3] + pad))
+            has = inside.any(axis=1)
+            first = inside.argmax(axis=1)
+            ends.append((has, ok[first], who[first]))
+        (ha, oka, wa), (hb, okb, wb) = ends
+        good = ha & hb & oka & okb
+        out[idx] = np.where(good, np.where(wa == wb, 0, 1), -1)
+    return [int(v) for v in out]
+
+
+def _joined_now_py(model, pairs: dict) -> "list[int]":
+    """The plain version (kept: it is what the fast one is checked against)."""
     by_page = _text_nodes(model)
     out = []
     box = pairs["box"]
@@ -577,7 +620,19 @@ def _corrections(pairs: dict, ys: list[int], auto, approved_all: bool) -> tuple[
     — and, with no proposal, is what the analysis logged."""
     d = [int(x) for x in pairs["d"]]
     if auto is not None:
-        da = joined_now(auto, pairs)
+        np = _np()
+        # V4.30: the proposal does not change while the file is edited: its answers are kept with it
+        sig = (len(d), float(np.sum(pairs["box"])), int(np.sum(pairs["page"]))) if np is not None else None
+        kept = getattr(auto, "_zone_da", None)
+        if sig is not None and kept is not None and kept[0] == sig:
+            da = kept[1]
+        else:
+            da = joined_now(auto, pairs)
+            if sig is not None:
+                try:
+                    auto._zone_da = (sig, da)
+                except Exception:
+                    pass
         d = [da[i] if da[i] >= 0 else d[i] for i in range(len(d))]
     return d, [i for i, y in enumerate(ys) if y >= 0 and y != d[i]]
 

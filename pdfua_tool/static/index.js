@@ -36,10 +36,23 @@
   ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
   drop.addEventListener('drop', (e) => { fi.files = e.dataTransfer.files; showFiles(); });
   fi.addEventListener('change', showFiles);
+  const mbOf = (b) => b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
   function showFiles() {
-    const n = fi.files.length;
-    $('fileList').textContent = n ? [...fi.files].map((f) => f.name).join(', ') : '';
-    $('batchRow').classList.toggle('hidden', n < 2);
+    const list = [...fi.files];
+    const box = $('fileList');
+    if (!list.length) { box.textContent = 'One file opens the editor; several files run as a batch.'; $('batchRow').classList.add('hidden'); return; }
+    box.replaceChildren(...list.slice(0, 40).map((f, i) => UA.el('span', { class: 'fchip', title: f.name },
+      UA.el('span', { text: `${f.name} · ${mbOf(f.size)}` }),
+      UA.el('button', { type: 'button', 'aria-label': 'Do not upload ' + f.name, title: 'Take this file out', text: '✕', onclick: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const dt = new DataTransfer();
+        [...fi.files].forEach((x, k) => { if (k !== i) dt.items.add(x); });
+        fi.files = dt.files;
+        showFiles();
+      } }))), ...(list.length > 40 ? [UA.el('span', { class: 'ftotal', text: `… and ${list.length - 40} more` })] : []),
+      UA.el('span', { class: 'ftotal', text: `${list.length} file(s) · ${mbOf(list.reduce((a, f) => a + f.size, 0))}` }));
+    $('batchRow').classList.toggle('hidden', list.length < 2);
   }
 
   if ($('saveProfile')) $('saveProfile').addEventListener('click', async () => {
@@ -75,6 +88,9 @@
   const open = new Set();
   let jobsCache = [];
   let tick = null;
+  const PAGE = 150;
+  let limit = PAGE;
+  const dur = (sec) => sec < 60 ? `${Math.round(sec || 0)} s` : sec < 3600 ? `${Math.round(sec / 60)} min` : `${Math.floor(sec / 3600)} h ${String(Math.round(sec % 3600 / 60)).padStart(2, '0')} min`;
   try { const f = JSON.parse(localStorage.getItem('ua-jobfilter') || '{}');
     ['jobStage', 'jobSort'].forEach((k) => { if (f[k]) $(k).value = f[k]; }); } catch (e) { /* ignore */ }
   const saveFilter = () => { try { localStorage.setItem('ua-jobfilter', JSON.stringify({ jobStage: $('jobStage').value, jobSort: $('jobSort').value })); } catch (e) { /* ignore */ } };
@@ -96,10 +112,20 @@
       const n = k ? jobsCache.filter((j) => stepOf(j, k)).length : jobsCache.length;
       if (k && !n && k !== 'mine' && k !== wfView) return null;
       return UA.el('button', { type: 'button', role: 'tab', class: 'wftab t-' + (k || 'all') + (wfView === k ? ' on' : ''), 'aria-selected': wfView === k ? 'true' : 'false',
-        onclick: () => { wfView = k; const u = new URL(location.href); u.searchParams.delete('view'); if (k) u.searchParams.set('step', k); else u.searchParams.delete('step'); history.replaceState(null, '', u); render(); wfBar(); } },
+        onclick: () => { setStep(k); } },
         label, UA.el('span', { class: 'n', text: String(n) }));
     }), UA.el('div', { class: 'spacer' }),
     !window.IS_ADMIN && window.CAN_UPLOAD && W ? UA.el('button', { type: 'button', class: 'sm', title: 'Your rework first, then what you started, then the files given to you', text: 'Next file ▸', onclick: W.takeNext }) : null].filter(Boolean));
+  }
+  function setStep(k) {
+    wfView = k;
+    const u = new URL(location.href);
+    u.searchParams.delete('view');
+    if (k) u.searchParams.set('step', k); else u.searchParams.delete('step');
+    history.replaceState(null, '', u);
+    limit = PAGE;
+    render();
+    wfBar();
   }
   function errorsOf(j) { return j.score_after ? (j.score_after.errors || 0) : (j.score_before ? (j.score_before.errors || 0) : 0); }
   function shown(jobs) {
@@ -125,110 +151,226 @@
     if (cmp) list = [...list].sort(cmp);
     return list;
   }
-  ['jobSearch', 'jobStage', 'jobProfile', 'jobSort'].forEach((id) => $(id).addEventListener(id === 'jobSearch' ? 'input' : 'change', () => { saveFilter(); render(); }));
-
-  async function refresh() {
-    clearTimeout(tick);
-    jobsCache = await UA.get('/api/jobs' + (batch ? '?batch=' + batch : ''));
-    const profs = [...new Set(jobsCache.map((j) => j.profile || 'Default'))].sort();
-    const ps = $('jobProfile');
-    const cur = ps.value;
-    ps.replaceChildren(new Option('Every profile', ''), ...profs.map((p) => new Option(p, p)));
-    ps.value = profs.includes(cur) ? cur : '';
+  // V4.30: the filters in use are shown, and one click clears them all
+  const STAGE_NAME = { active: 'working now', review: 'to review', done: 'built', clean: 'built with 0 errors', error: 'failed' };
+  function renderChips() {
+    const chips = [];
+    const q = $('jobSearch').value.trim();
+    if (q) chips.push([`Search “${q}”`, () => { $('jobSearch').value = ''; }]);
+    if ($('jobStage').value) chips.push([`Status: ${STAGE_NAME[$('jobStage').value] || $('jobStage').value}`, () => { $('jobStage').value = ''; }]);
+    if ($('jobProfile').value) chips.push([`Profile ${$('jobProfile').value}`, () => { $('jobProfile').value = ''; }]);
+    if (wfView) chips.push([`Step: ${(STEP_TABS.find((t) => t[0] === wfView) || [0, wfView])[1]}`, () => { wfView = ''; setStepQuiet(); }]);
+    $('jobChips').replaceChildren(...chips.map(([text, clear]) => UA.el('span', { class: 'fchip' }, text,
+      UA.el('button', { type: 'button', 'aria-label': 'Remove: ' + text, title: 'Remove this filter', text: '✕', onclick: () => { clear(); saveFilter(); limit = PAGE; render(); wfBar(); } }))));
+    const sorted = $('jobSort').value !== 'new';
+    $('jobReset').disabled = !chips.length && !sorted;
+    $('jobBar').classList.toggle('filtered', chips.length > 0);
+    return chips.length;
+  }
+  function setStepQuiet() { const u = new URL(location.href); u.searchParams.delete('view'); u.searchParams.delete('step'); history.replaceState(null, '', u); }
+  function resetJobFilters() {
+    ['jobSearch', 'jobStage', 'jobProfile'].forEach((id) => { $(id).value = ''; });
+    $('jobSort').value = 'new';
+    wfView = '';
+    setStepQuiet();
+    saveFilter();
+    limit = PAGE;
     render();
     wfBar();
-    dashboard();
+  }
+  let searchT = null;
+  ['jobSearch', 'jobStage', 'jobProfile', 'jobSort'].forEach((id) => $(id).addEventListener(id === 'jobSearch' ? 'input' : 'change', () => {
+    saveFilter();
+    limit = PAGE;
+    if (id === 'jobSearch') { clearTimeout(searchT); searchT = setTimeout(render, 120); } else render();
+  }));
+  $('jobReset').addEventListener('click', resetJobFilters);
+  $('jobEmptyReset').addEventListener('click', resetJobFilters);
+  $('jobMore').addEventListener('click', () => { limit += PAGE; render(); });
+  $('jobSearch').addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('jobSearch').value) { $('jobSearch').value = ''; render(); } });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName || '')) && !document.querySelector('dialog[open]')) {
+      e.preventDefault();
+      $('jobSearch').focus();
+    }
+  });
+
+  // what is on the screen is only changed where a file changed (a list used to be drawn again, and its rows' entrance played again,
+  // every second and a half while anything was being analysed)
+  let lastSig = '';
+  async function refresh() {
+    clearTimeout(tick);
+    let list;
+    try { list = await UA.get('/api/jobs' + (batch ? '?batch=' + batch : '')); } catch (e) { tick = setTimeout(refresh, 4000); return; }
+    const sig = JSON.stringify(list);
+    const changed = sig !== lastSig;
+    lastSig = sig;
+    jobsCache = list;
+    if (changed || !refresh.first) {
+      refresh.first = true;
+      const profs = [...new Set(jobsCache.map((j) => j.profile || 'Default'))].sort();
+      const ps = $('jobProfile');
+      const cur = ps.value;
+      ps.replaceChildren(new Option('Every profile', ''), ...profs.map((p) => new Option(p, p)));
+      ps.value = profs.includes(cur) ? cur : '';
+      render();
+      wfBar();
+      dashboardSoon();
+    }
     if (jobsCache.some((j) => active.includes(j.stage))) tick = setTimeout(refresh, 1500);
   }
 
+  // ---------------------------------------------------------- the rows
+  const rows = new Map();            // file -> { tr, sig, live, det }
+  const liveOf = (j) => `${j.message}|${j.progress}|${j.position}`;
+  const sigOf = (j) => JSON.stringify([j.filename, j.stage, j.pages, j.mode, j.profile, j.assigned_to, j.priority, j.due, j.work, j.wstage, j.rework,
+    j.comments_open, j.comments_fixed, j.pac, j.pac_last, j.qa_user, j.fqa_user, j.locked_by, j.lock_mine, j.can_edit, j.todo, j.built, j.dirty, j.error,
+    j.title, j.created, j.owner, j.score_before, j.score_after, j.my_work_s, j.my_qc_s, j.work_s, j.qc_s, open.has(j.id)]);
+  function buildRow(j, i) {
+    const sb = j.score_before || {}, sa = j.score_after || {};
+    const errs = j.score_after ? `${sb.errors} <span class="arrow">→</span> <b class="${sa.errors ? 'bad' : 'good'}">${sa.errors}</b>` :
+      (j.score_before ? `${sb.errors}` : '');
+    const busy = active.includes(j.stage);
+    let msg = j.message || j.stage;
+    if (busy && j.position) msg = `waiting — ${j.position === 1 ? 'next' : '#' + j.position} in queue (other files are processing)`;
+    const status = busy
+      ? `<div class="small stmsg">${UA.esc(msg)}</div><div class="bar"><i style="width:${Math.round((j.progress || 0) * 100)}%"></i></div>
+         <button class="sm stopbtn" data-id="${j.id}" type="button">Stop</button>`
+      : j.stage === 'question'
+      ? `<a class="btn sm primary" href="/job/${j.id}">Already tagged — answer</a>`
+      : `<span class="chip ${j.stage === 'done' ? 'ok' : j.stage === 'error' ? 'err' : ''}" title="${UA.esc(j.error || '')}">${UA.esc(j.stage === 'done' ? 'built' : j.stage)}</span>` +
+        (j.dirty && j.stage === 'done' ? ' <span class="chip warn" title="Edited since the last build">edited</span>' : '') +
+        (j.stage === 'error' && j.error ? `<div class="tiny muted">${UA.esc(j.error.slice(0, 140))}</div>` : '');
+    const tr = document.createElement('tr');
+    tr.className = 'jobrow enter' + (open.has(j.id) ? ' open' : '');
+    tr.style.animationDelay = Math.min(i, 14) * 22 + 'ms';
+    tr.addEventListener('animationend', () => tr.classList.remove('enter'), { once: true });       // it plays once, not every time the row is put back
+    tr.dataset.id = j.id;
+    const WS = window.WORK_STATES || {};
+    const who = window.IS_ADMIN ? (j.assigned_to ? `<div class="tiny">→ ${UA.esc(j.assigned_to)}</div>` : '<div class="tiny muted">pool</div>') : '';
+    const canRean = window.CAN_UPLOAD && !busy && (j.can_edit || window.IS_ADMIN);
+    const qa = ['qa', 'final_qa'].includes(window.MY_ROLE);
+    const todo = { start: 'Start', work: 'Continue', rework: 'Fix the rework', pick: 'Check ▸', check: 'Continue checking', deliver: 'Deliver' }[j.todo];
+    const mine = (j.my_work_s || 0) + (j.my_qc_s || 0), team = (j.work_s || 0) + (j.qc_s || 0);
+    const timeBit = (mine || team) ? `<div class="tiny muted timechip" title="${UA.esc(
+      'Only the time you were active in this file — breaks are left out.' + (team ? ` Everybody together: ${dur(team)} (working ${dur(j.work_s || 0)}${j.qc_s ? ', QC ' + dur(j.qc_s) : ''}).` : ''))}">⏱ ${mine ? dur(mine) : '—'}${team && team !== mine ? ` · all ${dur(team)}` : ''}</div>` : '';
+    tr.innerHTML = `
+      <td class="xcell"><button class="sm xbtn" type="button" data-id="${j.id}" aria-expanded="${open.has(j.id)}" title="Details">▸</button></td>
+      <td><a href="/job/${j.id}${j.locked_by && !j.lock_mine ? '?view=1' : ''}${qa ? '#review' : ''}"${j.locked_by && !j.lock_mine ? ` title="${UA.esc(j.locked_by)} is working on this file — you can look at it, not change it"` : ''}>${UA.esc(j.filename)}</a>${j.locked_by ? `<span class="lockbadge" title="${j.lock_mine ? 'You have this file open' : UA.esc(j.locked_by) + ' is working on this file now — you can look, not change'}">🔒 ${j.lock_mine ? 'you' : UA.esc(j.locked_by)}</span>` : ''}<div class="tiny muted">${UA.esc((j.created || '').replace('T', ' '))}${j.title ? ' · ' + UA.esc(j.title.slice(0, 60)) : ''}</div></td>
+      <td class="stepcell" data-step="${j.id}"></td>
+      <td><button type="button" class="pchip pbtn" data-prof="${j.id}" data-fn="${UA.esc(j.filename)}" title="Change the profile of this file"${busy || !window.CAN_UPLOAD ? ' disabled' : ''}>${UA.esc(j.profile || 'Default')}</button>${who}${j.priority && j.priority !== 'normal' ? `<span class="prio p-${UA.esc(j.priority)}">${UA.esc(j.priority)}</span>` : ''}${j.due ? `<div class="tiny muted">due ${UA.esc(j.due)}</div>` : ''}</td>
+      <td>${j.pages || ''}${timeBit}</td><td>${UA.esc(j.mode || '')}</td><td>${errs}</td><td class="statuscell">${status}</td>
+      <td class="right">
+        ${todo && !busy ? `<a class="btn sm primary" href="/job/${j.id}#review" title="It waits for you">${todo}</a>` : ''}
+        ${j.can_edit && j.wstage === 'production' && j.stage !== 'question' && !busy && !window.IS_ADMIN ? `<button class="sm qabtn" type="button" data-id="${j.id}" title="Upload the PAC report and send the file to QA">Move to QA…</button>` : ''}
+        ${qa ? `<a class="btn sm" href="/job/${j.id}/download/original" title="The PDF as it came in">Input PDF</a>` : ''}
+        ${j.built ? `<a class="btn sm" href="/job/${j.id}/download/pdf" title="The accessible PDF">${qa ? 'Output PDF' : 'PDF'}</a> <a class="btn sm" href="/job/${j.id}/download/report">Report</a>` : ''}
+        ${canRean ? `<button class="sm reanbtn" type="button" data-id="${j.id}" title="Analyse the whole file again, like at upload (replaces all tags)">Re-analyse</button>` : ''}
+        ${window.CAN_UPLOAD && (window.IS_ADMIN || (j.owner || '').toLowerCase() === (window.ME || '').toLowerCase()) ? `<form method="post" action="/job/${j.id}/delete" class="inline"><button class="sm danger">Delete</button></form>` : ''}
+      </td>`;
+    const sc = tr.querySelector('.stepcell');
+    if (W) {
+      sc.append(W.strip(j.wstage, j.rework, true));
+      sc.append(UA.el('div', {}, W.stateChip(j.work, WS[j.work] || 'not given')));
+      const bits = UA.el('div', { class: 'tiny stepbits' });
+      if (j.comments_open) bits.append(UA.el('span', { class: 'cbadge', title: 'open review comments', text: `💬 ${j.comments_open}` }));
+      if (j.comments_fixed) bits.append(UA.el('span', { class: 'cbadge fx', title: 'marked fixed, waiting for QA to close', text: `✓ ${j.comments_fixed}` }));
+      if (j.pac_last) bits.append(UA.el('a', { class: 'cbadge pac ' + (j.pac_last.result || ''), href: `/job/${j.id}/pac/${j.pac - 1}`, title: `Last PAC report: ${j.pac_last.name}${j.pac_last.result ? ' — ' + j.pac_last.result : ''}`, text: 'PAC' + (j.pac_last.result === 'pass' ? ' ✓' : j.pac_last.result === 'fail' ? ' ✗' : '') }));
+      if (j.wstage === 'qa' && j.qa_user) bits.append(UA.el('span', { class: 'muted', text: '🔎 ' + j.qa_user }));
+      if (j.wstage === 'final_qa' && j.fqa_user) bits.append(UA.el('span', { class: 'muted', text: '🔎 ' + j.fqa_user }));
+      if (bits.childNodes.length) sc.append(bits);
+    }
+    return tr;
+  }
   function render() {
-    const jobs = shown(jobsCache);
+    const all = shown(jobsCache);
+    const jobs = all.slice(0, limit);
     const tb = document.querySelector('#jobs tbody');
-    tb.innerHTML = '';
-    $('emptyJobs').classList.toggle('hidden', jobs.length > 0);
-    $('emptyJobs').textContent = jobsCache.length ? 'No file matches.' : 'Nothing yet.';
+    renderChips();
+    $('emptyJobs').classList.toggle('hidden', all.length > 0);
+    $('jobEmptyMsg').textContent = jobsCache.length ? 'No file matches these filters.' : 'Nothing yet — upload a PDF above to begin.';
+    $('jobEmptyReset').classList.toggle('hidden', !jobsCache.length);
+    $('jobs').classList.toggle('hidden', all.length === 0);
+    $('jobCount').textContent = all.length === jobsCache.length ? `${all.length} file(s)` : `${all.length} of ${jobsCache.length} file(s)`;
+    const left = all.length - limit;
+    $('jobMoreRow').classList.toggle('hidden', left <= 0);
+    $('jobMore').textContent = `Show ${Math.min(PAGE, left)} more (${left} left)`;
+    const wanted = [];
+    const keep = new Set();
     jobs.forEach((j, i) => {
-      const sb = j.score_before || {}, sa = j.score_after || {};
-      const errs = j.score_after ? `${sb.errors} <span class="arrow">→</span> <b class="${sa.errors ? 'bad' : 'good'}">${sa.errors}</b>` :
-        (j.score_before ? `${sb.errors}` : '');
-      const busy = active.includes(j.stage);
-      let msg = j.message || j.stage;
-      if (busy && j.position) msg = `waiting — ${j.position === 1 ? 'next' : '#' + j.position} in queue (other files are processing)`;
-      const status = busy
-        ? `<div class="small">${UA.esc(msg)}</div><div class="bar"><i style="width:${Math.round((j.progress || 0) * 100)}%"></i></div>
-           <button class="sm stopbtn" data-id="${j.id}" type="button">Stop</button>`
-        : j.stage === 'question'
-        ? `<a class="btn sm primary" href="/job/${j.id}">Already tagged — answer</a>`
-        : `<span class="chip ${j.stage === 'done' ? 'ok' : j.stage === 'error' ? 'err' : ''}" title="${UA.esc(j.error || '')}">${UA.esc(j.stage === 'done' ? 'built' : j.stage)}</span>` +
-          (j.dirty && j.stage === 'done' ? ' <span class="chip warn" title="Edited since the last build">edited</span>' : '') +
-          (j.stage === 'error' && j.error ? `<div class="tiny muted">${UA.esc(j.error.slice(0, 140))}</div>` : '');
-      const tr = document.createElement('tr');
-      tr.className = 'jobrow' + (open.has(j.id) ? ' open' : '');
-      tr.style.animationDelay = Math.min(i, 20) * 18 + 'ms';
-      const WS = window.WORK_STATES || {};
-      const who = window.IS_ADMIN ? (j.assigned_to ? `<div class="tiny">→ ${UA.esc(j.assigned_to)}</div>` : '<div class="tiny muted">pool</div>') : '';
-      const canRean = window.CAN_UPLOAD && !busy && (j.can_edit || window.IS_ADMIN);
-      const qa = ['qa', 'final_qa'].includes(window.MY_ROLE);
-      const todo = { start: 'Start', work: 'Continue', rework: 'Fix the rework', pick: 'Check ▸', check: 'Continue checking', deliver: 'Deliver' }[j.todo];
-      tr.innerHTML = `
-        <td class="xcell"><button class="sm xbtn" type="button" data-id="${j.id}" aria-expanded="${open.has(j.id)}" title="Details">▸</button></td>
-        <td><a href="/job/${j.id}${j.locked_by && !j.lock_mine ? '?view=1' : ''}${qa ? '#review' : ''}"${j.locked_by && !j.lock_mine ? ` title="${UA.esc(j.locked_by)} is working on this file — you can look at it, not change it"` : ''}>${UA.esc(j.filename)}</a>${j.locked_by ? `<span class="lockbadge" title="${j.lock_mine ? 'You have this file open' : UA.esc(j.locked_by) + ' is working on this file now — you can look, not change'}">🔒 ${j.lock_mine ? 'you' : UA.esc(j.locked_by)}</span>` : ''}<div class="tiny muted">${UA.esc((j.created || '').replace('T', ' '))}${j.title ? ' · ' + UA.esc(j.title.slice(0, 60)) : ''}</div></td>
-        <td class="stepcell" data-step="${j.id}"></td>
-        <td><button type="button" class="pchip pbtn" data-prof="${j.id}" data-fn="${UA.esc(j.filename)}" title="Change the profile of this file"${busy || !window.CAN_UPLOAD ? ' disabled' : ''}>${UA.esc(j.profile || 'Default')}</button>${who}${j.priority && j.priority !== 'normal' ? `<span class="prio p-${UA.esc(j.priority)}">${UA.esc(j.priority)}</span>` : ''}${j.due ? `<div class="tiny muted">due ${UA.esc(j.due)}</div>` : ''}</td>
-        <td>${j.pages || ''}</td><td>${UA.esc(j.mode || '')}</td><td>${errs}</td><td>${status}</td>
-        <td class="right">
-          ${todo && !busy ? `<a class="btn sm primary" href="/job/${j.id}#review" title="It waits for you">${todo}</a>` : ''}
-          ${j.can_edit && j.wstage === 'production' && j.stage !== 'question' && !busy && !window.IS_ADMIN ? `<button class="sm qabtn" type="button" data-id="${j.id}" title="Upload the PAC report and send the file to QA">Move to QA…</button>` : ''}
-          ${qa ? `<a class="btn sm" href="/job/${j.id}/download/original" title="The PDF as it came in">Input PDF</a>` : ''}
-          ${j.built ? `<a class="btn sm" href="/job/${j.id}/download/pdf" title="The accessible PDF">${qa ? 'Output PDF' : 'PDF'}</a> <a class="btn sm" href="/job/${j.id}/download/report">Report</a>` : ''}
-          ${canRean ? `<button class="sm reanbtn" type="button" data-id="${j.id}" title="Analyse the whole file again, like at upload (replaces all tags)">Re-analyse</button>` : ''}
-          ${window.CAN_UPLOAD && (window.IS_ADMIN || (j.owner || '').toLowerCase() === (window.ME || '').toLowerCase()) ? `<form method="post" action="/job/${j.id}/delete" class="inline"><button class="sm danger">Delete</button></form>` : ''}
-        </td>`;
-      const sc = tr.querySelector('.stepcell');
-      if (W) {
-        sc.append(W.strip(j.wstage, j.rework, true));
-        sc.append(UA.el('div', {}, W.stateChip(j.work, WS[j.work] || 'not given')));
-        const bits = UA.el('div', { class: 'tiny stepbits' });
-        if (j.comments_open) bits.append(UA.el('span', { class: 'cbadge', title: 'open review comments', text: `💬 ${j.comments_open}` }));
-        if (j.comments_fixed) bits.append(UA.el('span', { class: 'cbadge fx', title: 'marked fixed, waiting for QA to close', text: `✓ ${j.comments_fixed}` }));
-        if (j.pac_last) bits.append(UA.el('a', { class: 'cbadge pac ' + (j.pac_last.result || ''), href: `/job/${j.id}/pac/${j.pac - 1}`, title: `Last PAC report: ${j.pac_last.name}${j.pac_last.result ? ' — ' + j.pac_last.result : ''}`, text: 'PAC' + (j.pac_last.result === 'pass' ? ' ✓' : j.pac_last.result === 'fail' ? ' ✗' : '') }));
-        if (j.wstage === 'qa' && j.qa_user) bits.append(UA.el('span', { class: 'muted', text: '🔎 ' + j.qa_user }));
-        if (j.wstage === 'final_qa' && j.fqa_user) bits.append(UA.el('span', { class: 'muted', text: '🔎 ' + j.fqa_user }));
-        if (bits.childNodes.length) sc.append(bits);
+      const sig = sigOf(j), live = liveOf(j);
+      let r = rows.get(j.id);
+      if (!r || r.sig !== sig) {
+        r = { tr: buildRow(j, r ? 0 : i), sig, live, det: null };
+        if (rows.get(j.id)) { rows.get(j.id).tr.remove(); if (rows.get(j.id).det) rows.get(j.id).det.remove(); }
+        rows.set(j.id, r);
+      } else if (r.live !== live) {                 // only the progress of a file that is being worked on moved: the bar, not the row
+        r.live = live;
+        const bar = r.tr.querySelector('.bar i');
+        if (bar) bar.style.width = Math.round((j.progress || 0) * 100) + '%';
+        const m = r.tr.querySelector('.stmsg');
+        if (m) m.textContent = j.position ? `waiting — ${j.position === 1 ? 'next' : '#' + j.position} in queue (other files are processing)` : (j.message || j.stage);
       }
-      tb.appendChild(tr);
-      if (open.has(j.id)) tb.appendChild(detailRow(j));
+      keep.add(j.id);
+      wanted.push(r.tr);
+      if (open.has(j.id)) {
+        if (!r.det) r.det = detailRow(j);
+        wanted.push(r.det);
+      } else if (r.det) { r.det.remove(); r.det = null; }
     });
-    tb.querySelectorAll('.xbtn').forEach((b) => b.addEventListener('click', () => {
+    // a row that is filtered out leaves the page but is kept (it comes back as it was, without its entrance); one whose file is gone is let go
+    const exist = new Set(jobsCache.map((j) => j.id));
+    for (const [id, r] of rows) {
+      if (keep.has(id)) continue;
+      if (r.tr.parentNode) r.tr.remove();
+      if (r.det && r.det.parentNode) r.det.remove();
+      if (!exist.has(id) || rows.size > 500) rows.delete(id);
+    }
+    let ref = tb.firstChild;
+    for (const tr of wanted) {
+      if (tr === ref) ref = ref.nextSibling;
+      else tb.insertBefore(tr, ref);
+    }
+    while (ref) { const nx = ref.nextSibling; ref.remove(); ref = nx; }
+  }
+  // the buttons of the rows: one listener for the whole table
+  document.querySelector('#jobs tbody').addEventListener('click', async (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.classList.contains('xbtn')) {
       const id = b.dataset.id;
-      open.has(id) ? open.delete(id) : open.add(id);
+      if (open.has(id)) open.delete(id); else open.add(id);
+      const r = rows.get(id);
+      if (r) r.sig = '';                              // the row is made again (its arrow, and its details)
       render();
-    }));
-    tb.querySelectorAll('.reanbtn').forEach((b) => b.addEventListener('click', async () => {
+    } else if (b.classList.contains('reanbtn')) {
       if (!confirm('Re-analyse the whole file? All tags and manual edits are replaced (a backup of the current tags is kept).')) return;
       b.disabled = true;
       const r = await fetch('/job/' + b.dataset.id + '/reanalyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'could not start'); }
       refresh();
-    }));
-    tb.querySelectorAll('.pbtn').forEach((b) => b.addEventListener('click', () => UA.pickProfile(b.dataset.prof, b.dataset.fn, () => refresh())));
-    tb.querySelectorAll('.qabtn').forEach((b) => b.addEventListener('click', () => W && W.submitDialog(b.dataset.id, () => { delete summaries[b.dataset.id]; refresh(); })));
-    tb.querySelectorAll('.stopbtn').forEach((b) => b.addEventListener('click', async () => {
+    } else if (b.classList.contains('pbtn')) {
+      if (!b.disabled) UA.pickProfile(b.dataset.prof, b.dataset.fn, () => refresh());
+    } else if (b.classList.contains('qabtn')) {
+      if (W) W.submitDialog(b.dataset.id, () => { delete summaries[b.dataset.id]; refresh(); });
+    } else if (b.classList.contains('stopbtn')) {
       if (!confirm('Stop this file?')) return;
       b.disabled = true;
       const r = await UA.post('/api/job/' + b.dataset.id + '/stop');
       if (r && r.error) UA.toast(r.error, 4500);
       setTimeout(refresh, 500);
-    }));
-    // delete: asks first; a file somebody works in is refused (423) with the name — a message, not a page of JSON
-    tb.querySelectorAll('form.inline[action$="/delete"]').forEach((f) => f.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      if (!confirm('Delete this job?')) return;
-      const r = await fetch(f.action, { method: 'POST', headers: { 'X-Requested-With': 'fetch' } });
-      if (r.status === 423 || r.status === 403) { const d = await r.json().catch(() => ({})); alert(d.error || 'This file cannot be deleted now.'); return; }
-      refresh();
-    }));
-  }
+    }
+  });
+  // delete: asks first; a file somebody works in is refused (423) with the name — a message, not a page of JSON
+  document.querySelector('#jobs tbody').addEventListener('submit', async (e) => {
+    const f = e.target.closest('form.inline[action$="/delete"]');
+    if (!f) return;
+    e.preventDefault();
+    if (!confirm('Delete this job?')) return;
+    const r = await fetch(f.action, { method: 'POST', headers: { 'X-Requested-With': 'fetch' } });
+    if (r.status === 423 || r.status === 403) { const d = await r.json().catch(() => ({})); alert(d.error || 'This file cannot be deleted now.'); return; }
+    refresh();
+  });
 
   // ---------------------------------------------------------- one file in detail
   const summaries = {};
@@ -321,13 +463,22 @@
   }
 
   // ---------------------------------------------------------- the dashboard
-  let dashBusy = false;
+  let dashBusy = false, dashT = null, dashLast = 0, dashSig = '';
+  function dashboardSoon() {                      // at most every 6 seconds while files are being worked on
+    clearTimeout(dashT);
+    const wait = Math.max(0, 6000 - (Date.now() - dashLast));
+    dashT = setTimeout(dashboard, wait);
+  }
   async function dashboard() {
     if (dashBusy) return;
     dashBusy = true;
+    dashLast = Date.now();
     let d;
     try { d = await UA.get('/api/dashboard'); } finally { dashBusy = false; }
     if (!d) return;
+    const sig = JSON.stringify(d);
+    if (sig === dashSig) return;                   // the same numbers: nothing is drawn (nor its entrance played) again
+    dashSig = sig;
     const el = UA.el;
     const tile = (cls, big, label, sub) => el('div', { class: 'tile ' + cls }, el('div', { class: 'tbig', 'data-n': big, text: String(big) }),
       el('div', { class: 'tlabel', text: label }), sub ? el('div', { class: 'tsub', text: sub }) : null);
@@ -379,8 +530,19 @@
   });
   document.addEventListener('wf-queue', (e) => fillQ(e.detail));
   if (window.WFQ) fillQ(window.WFQ);
-  document.querySelectorAll('.qtile').forEach((t) => t.addEventListener('click', () => { wfView = 'mine'; render(); wfBar(); }));
+  document.querySelectorAll('.qtile').forEach((t) => t.addEventListener('click', () => { setStep('mine'); }));
   refresh();
+  // cards slide in when the page shows them; the filter bar gets a shadow when the list is scrolled under it
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!still && 'IntersectionObserver' in window) {
+    const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { rootMargin: '0px 0px -8% 0px' });
+    document.querySelectorAll('.wrap > .card, .dashrow .card').forEach((c, i) => { c.classList.add('reveal'); c.style.setProperty('--ri', String(Math.min(i, 8))); io.observe(c); });
+    setTimeout(() => document.querySelectorAll('.reveal:not(.in)').forEach((c) => c.classList.add('in')), 1600);
+    const bar = $('jobBar');
+    const mark = UA.el('div', { class: 'stickmark', 'aria-hidden': 'true' });
+    bar.before(mark);
+    new IntersectionObserver(([e]) => bar.classList.toggle('stuck', !e.isIntersecting), { rootMargin: '-60px 0px 0px 0px' }).observe(mark);
+  }
 })();
 
 // V4.29 — Dez AI on the file list: a tip at a time (never while the pointer is on it, never with "less motion")

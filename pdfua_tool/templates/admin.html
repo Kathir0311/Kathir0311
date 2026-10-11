@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Admin — Dezquare PDF Accessibility Studio{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}?v={{ asset_v }}">{% endblock %}
 {% block bodyclass %}adminpage{% endblock %}
 {% block body %}
 <div class="wrap wide">
@@ -13,6 +14,7 @@
     <button data-tab="files" role="tab">Files <span class="count" id="poolCount"></span></button>
     <button data-tab="workflow" role="tab">Workflow <span class="count" id="wfCount"></span></button>
     <button data-tab="users" role="tab">Users</button>
+    <button data-tab="time" role="tab">Time</button>
     <button data-tab="samples" role="tab">Sample files <span class="count" id="sampCount"></span></button>
     <button data-tab="brain" role="tab">🧠 Dez AI <span class="count" id="brainCount"></span></button>
     <button data-tab="bulk" role="tab">Bulk upload (folder)</button>
@@ -57,21 +59,59 @@
   <!-- files -->
   <section class="apane hidden" id="pane-files">
     <div class="card">
-      <div class="fhead">
-        <input type="search" id="fSearch" placeholder="Search file, folder, title…">
-        <select id="fUser" title="Given to"><option value="">Every user</option><option value="-">Not given (pool)</option>
-          {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}</select>
-        <select id="fWork" title="Work"><option value="">Any work status</option>
-          {% for k, v in states.items() %}{% if k %}<option value="{{ k }}">{{ v }}</option>{% endif %}{% endfor %}</select>
-        <select id="fStage" title="Tool status"><option value="">Any tool status</option><option value="active">working now</option>
-          <option value="review">to review</option><option value="done">built</option><option value="error">failed</option><option value="question">tags found — answer</option></select>
-        <select id="fFolder" title="Folder / batch"><option value="">Every folder</option></select>
-        <select id="fProfile" title="Profile"><option value="">Every profile</option>{% for name in profiles %}<option>{{ name }}</option>{% endfor %}</select>
-        <select id="fPrio" title="Priority"><option value="">Any priority</option><option>urgent</option><option>high</option><option>normal</option><option>low</option></select>
-        <select id="fSort" title="Sort"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="name">Name</option>
-          <option value="pages">Most pages</option><option value="due">Due first</option><option value="prio">Priority</option><option value="user">User</option></select>
-        <div class="spacer"></div>
-        <span class="small muted" id="fCount"></span>
+      <div class="filterbar" id="filterBar">
+        <div class="fhead">
+          <label class="fsearch"><span aria-hidden="true">🔍</span><input type="search" id="fSearch" placeholder="Search file, folder, title, user…  ( / )" aria-label="Search files"></label>
+          <select id="fUser" title="Given to"><option value="">Every user</option><option value="-">Not given (pool)</option>
+            {% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}</select>
+          <select id="fWork" title="Work"><option value="">Any work status</option>
+            {% for k, v in states.items() %}{% if k %}<option value="{{ k }}">{{ v }}</option>{% endif %}{% endfor %}</select>
+          <select id="fStage" title="Tool status"><option value="">Any tool status</option><option value="active">working now</option>
+            <option value="review">to review</option><option value="done">built</option><option value="error">failed</option><option value="question">tags found — answer</option></select>
+          <select id="fFolder" title="Folder / batch"><option value="">Every folder</option></select>
+          <select id="fProfile" title="Profile"><option value="">Every profile</option>{% for name in profiles %}<option>{{ name }}</option>{% endfor %}</select>
+          <select id="fPrio" title="Priority"><option value="">Any priority</option><option>urgent</option><option>high</option><option>normal</option><option>low</option></select>
+          <select id="fSort" title="Sort"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="name">Name</option>
+            <option value="pages">Most pages</option><option value="due">Due first</option><option value="prio">Priority</option><option value="user">User</option>
+            <option value="edited">Edited lately</option><option value="time">Most working time</option><option value="timeasc">Least working time</option><option value="errors">Most errors left</option></select>
+          <div class="spacer"></div>
+          <span class="small muted" id="fCount" aria-live="polite"></span>
+        </div>
+        <div class="fhead fsecond">
+          <button type="button" class="sm" id="fAdv" aria-expanded="false" aria-controls="fAdvPanel">⚙ More filters <span class="count hidden" id="fAdvN"></span></button>
+          <select id="fViews" class="sm" title="Saved views — a set of filters you use often"><option value="">Saved views…</option></select>
+          <button type="button" class="sm" id="fSave" title="Keep the filters as they are now as a view">＋ Save view</button>
+          <button type="button" class="sm" id="fDelView" title="Delete the view chosen" hidden>Delete view</button>
+          <div class="chips" id="fChips" aria-label="Filters in use"></div>
+          <div class="spacer"></div>
+          <button type="button" class="sm resetbtn" id="fReset" title="Clear every filter and the sort (Esc in the search box clears the search)" disabled>↺ Reset filters</button>
+          <button type="button" class="sm" id="fExport" title="The files shown, as a .csv for Excel (with the working time)">⤓ Export these</button>
+        </div>
+        <div class="advpanel hidden" id="fAdvPanel">
+          <fieldset><legend>Dates</legend>
+            <label>Uploaded from<input type="date" id="fUpFrom"></label><label>to<input type="date" id="fUpTo"></label>
+            <label>Due from<input type="date" id="fDueFrom"></label><label>to<input type="date" id="fDueTo"></label>
+            <label class="check"><input type="checkbox" id="fOverdue"> Overdue only</label>
+          </fieldset>
+          <fieldset><legend>Size and errors</legend>
+            <label>Pages at least<input type="number" id="fPgMin" min="0" step="1"></label><label>at most<input type="number" id="fPgMax" min="0" step="1"></label>
+            <label>Errors left at least<input type="number" id="fErrMin" min="0" step="1"></label>
+            <label class="check"><input type="checkbox" id="fHasErr"> Has errors left</label>
+          </fieldset>
+          <fieldset><legend>Working time</legend>
+            <label>Working ≥ (min)<input type="number" id="fWorkMin" min="0" step="5"></label>
+            <label>QC ≥ (min)<input type="number" id="fQcMin" min="0" step="5"></label>
+            <label>Worked on by<select id="fWorkedBy"><option value="">anybody</option>{% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}</select></label>
+            <label class="check"><input type="checkbox" id="fNoTime"> Nobody has worked on it</label>
+          </fieldset>
+          <fieldset><legend>Workflow</legend>
+            <label>QA / Final QA<select id="fChecker"><option value="">anybody</option>{% for u in users %}{% if u.role in ('qa', 'final_qa', 'admin') %}<option value="{{ u.username }}">{{ u.username }}</option>{% endif %}{% endfor %}</select></label>
+            <label class="check"><input type="checkbox" id="fLocked"> Being edited now</label>
+            <label class="check"><input type="checkbox" id="fComments"> Open review comments</label>
+            <label class="check"><input type="checkbox" id="fRework"> Sent to rework</label>
+            <label>Built<select id="fBuilt"><option value="">either</option><option value="yes">built</option><option value="no">not built</option><option value="stale">changed since the build</option></select></label>
+          </fieldset>
+        </div>
       </div>
       <div class="bulkbar" id="bulkBar">
         <span class="selcount" id="selCount">0 selected</span>
@@ -110,11 +150,14 @@
       <div class="tablewrap">
       <table class="list ftable" id="fTable">
         <thead><tr><th class="ck"><input type="checkbox" id="ckAll" title="Select every file shown"></th><th>File</th><th>Given to</th><th>Work</th>
-          <th>Profile</th><th>Priority</th><th>Due</th><th>Pages</th><th>Tool</th><th>Errors</th><th>Uploaded by</th><th></th></tr></thead>
+          <th>Profile</th><th>Priority</th><th>Due</th><th>Pages</th><th title="Working time (only the time people were active — breaks are left out) and QC time">Time</th><th>Tool</th><th>Errors</th><th>Uploaded by</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
       </div>
-      <p class="muted small hidden" id="fEmpty">No file matches.</p>
+      <div class="selbanner hidden" id="fSelBanner" role="status"></div>
+      <div class="morerow hidden" id="fMoreRow"><button type="button" class="sm" id="fMore">Show more</button></div>
+      <div class="emptystate hidden" id="fEmpty"><div class="eico" aria-hidden="true">🗂</div><b>No file matches these filters.</b>
+        <span class="small muted">Clear them to see every file again.</span> <button type="button" class="sm primary" id="fEmptyReset">↺ Reset filters</button></div>
     </div>
   </section>
 
@@ -138,6 +181,11 @@
     <div class="card">
       <div class="dhead"><h3>Rules</h3><div class="spacer"></div><span class="tiny muted">saved at once</span></div>
       <div class="wfrules" id="wfRules"></div>
+      <div class="wfnum">
+        <label for="wfIdle"><b>Break after</b><span class="tiny muted">Working time counts only while a person does something in the file. A pause longer than this is a break and is left out (30 – 900 seconds).</span></label>
+        <input type="number" id="wfIdle" min="30" max="900" step="10" aria-label="Seconds without activity that count as a break"> <span class="small">seconds</span>
+        <button type="button" class="sm" id="wfIdleSave">Save</button>
+      </div>
     </div>
   </section>
 
@@ -145,7 +193,7 @@
   <section class="apane hidden" id="pane-users">
     <div class="dashrow two">
       <div class="card"><h3>Users</h3>
-        <table class="list" id="uTable"><thead><tr><th>User</th><th>Role</th><th>Files</th><th>Last sign-in</th><th>Active</th><th></th></tr></thead><tbody></tbody></table></div>
+        <table class="list" id="uTable"><thead><tr><th>User</th><th>Role</th><th>Files</th><th title="Working / QC time of the last 7 days">Time (7 days)</th><th>Rights</th><th>Last sign-in</th><th>Active</th><th></th></tr></thead><tbody></tbody></table></div>
       <div class="card"><h3>New user</h3>
         <form id="uForm" autocomplete="off">
           <label>User name<input name="username" required maxlength="40" pattern="[A-Za-z0-9._\-]+" title="letters, digits, . _ -"></label>
@@ -162,6 +210,30 @@
           <p class="small" id="uOut"></p>
         </form></div>
     </div>
+  </section>
+
+  <!-- time (V4.30) -->
+  <section class="apane hidden" id="pane-time">
+    <div class="ovhead">
+      <div><h2>Working time</h2><p class="tiny muted" id="tmSub">Only the time people are active in a file — a pause longer than the break limit is left out.</p></div>
+      <div class="spacer"></div>
+      <div class="seg" id="tmRange" role="group" aria-label="Period">
+        <button type="button" data-d="1">Today</button><button type="button" data-d="7" class="on">7 days</button>
+        <button type="button" data-d="14">14 days</button><button type="button" data-d="30">30 days</button><button type="button" data-d="90">90 days</button></div>
+      <select id="tmUser" title="One person"><option value="">Everybody</option>{% for u in users %}<option value="{{ u.username }}">{{ u.username }}</option>{% endfor %}</select>
+      <button class="sm" id="tmReset" disabled>↺ Reset</button>
+      <button class="sm" id="tmCsv" title="The table as a .csv for Excel">⤓ Export (.csv)</button>
+      <button class="sm" id="tmRefresh">↻</button>
+    </div>
+    <div class="tiles ovtiles" id="tmTiles">{% for i in range(4) %}<div class="tile skeleton"></div>{% endfor %}</div>
+    <div class="dashrow two">
+      <div class="card dcard"><div class="dhead"><h3>Day by day</h3><div class="spacer"></div>
+          <span class="tiny muted"><i class="legend-dot up"></i> working <i class="legend-dot ap"></i> QC</span></div>
+        <div class="spark tmspark" id="tmDays"></div></div>
+      <div class="card dcard"><div class="dhead"><h3>Who</h3></div>
+        <div id="tmBars" class="hbars"></div></div>
+    </div>
+    <div class="card"><div class="tablewrap"><table class="list" id="tmTable"><thead><tr><th>Person</th><th>Working</th><th>QC</th><th>Total</th><th>Files</th><th>Average per active day</th><th>Days</th></tr></thead><tbody></tbody></table></div></div>
   </section>
 
   <!-- sample files (V4.20) -->
@@ -343,6 +415,7 @@
           <option value="profile">profile changed</option><option value="learned">learned from / samples</option><option value="sign">signed in</option>
           <option value="deleted">deleted</option></select>
         <input type="search" id="logSearch" placeholder="Search…">
+        <button type="button" class="sm resetbtn" id="logReset" title="Clear the filters" disabled>↺ Reset</button>
         <a class="btn sm" id="logCsv" href="/api/admin/log.csv" title="The activity as a .csv for Excel">Export (.csv)</a></div>
       <div class="logstats" id="logStats"></div>
       <ol class="timeline" id="logList"></ol>
@@ -404,6 +477,15 @@
   <div class="dlg"><h3 id="noteTitle">Note</h3>
     <textarea id="noteText" rows="4" placeholder="What should the user know?"></textarea></div>
   <menu><button class="primary" id="noteGo">Save</button><button onclick="this.closest('dialog').close()">Cancel</button></menu>
+</dialog>
+
+<dialog id="rightsDlg" class="rightsdlg">
+  <div class="dlg"><div class="dhead"><h3>Rights of <span id="rgName"></span></h3><div class="spacer"></div><span class="rolechip" id="rgRole"></span></div>
+    <p class="small muted">The role gives a person a default for each right. Choose <b>Allow</b> or <b>Deny</b> to make an exception for this person — <b>Role default</b> follows the role. An admin can always do everything.</p>
+    <div id="rgList" class="rglist"></div>
+    <p class="small" id="rgOut" role="status"></p>
+  </div>
+  <menu><button class="primary" id="rgSave">Save rights</button><button id="rgReset" type="button">Back to the role's defaults</button><button onclick="this.closest('dialog').close()">Close</button></menu>
 </dialog>
 
 <dialog id="userDlg">

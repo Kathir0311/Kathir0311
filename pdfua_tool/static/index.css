@@ -1,0 +1,40 @@
+/* Dezquare PDF Accessibility Studio — the Users page (V4.30): the upload card, the dashboard and the list of files.
+   A list that is calm while files are worked on (rows are kept, only a bar moves), filters that can be seen and cleared,
+   and a little motion — transform / opacity only, and none at all with "reduce motion". */
+
+/* ---------------------------------------------------------------- the list */
+.jobscard{position:relative}
+.jobbar{position:sticky;top:0;z-index:4;background:var(--panel);padding:6px 0 6px;margin:0 0 4px;transition:box-shadow .2s ease}
+.jobbar.stuck{box-shadow:0 8px 20px rgba(16,24,40,.14);padding:8px 10px}
+.jobbar .fhead{margin-bottom:6px}
+.jobbar .chips{min-height:0}
+.jobbar select{max-width:170px;text-overflow:ellipsis}
+.jobrow{animation:none}
+.jobrow.enter{animation:rise .3s var(--ease) both}
+.jobrow td{transition:background .15s}
+.jobrow:hover td{background:color-mix(in srgb,var(--accent) 5%,var(--panel))}
+.timechip{white-space:nowrap;font-variant-numeric:tabular-nums}
+.stickmark{height:1px;margin:0;pointer-events:none}
+#jobs .bar i{background-image:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);background-size:60px 100%;background-repeat:no-repeat;animation:barflow 1.3s linear infinite}
+@keyframes barflow{from{background-position:-60px 0}to{background-position:calc(100% + 60px) 0}}
+.wftab{transition:background .15s,color .15s,transform .15s}
+.wftab:active{transform:scale(.97)}
+.wftab .n{transition:transform .2s}
+.wftab.on .n{animation:pop .3s cubic-bezier(.2,.7,.2,1)}
+
+/* ---------------------------------------------------------------- the upload card */
+.drop{position:relative;transition:border-color .2s,background .2s,transform .2s,box-shadow .2s}
+.drop::before{content:"⬆";display:block;font-size:26px;line-height:1;margin-bottom:6px;color:var(--accent);transition:transform .25s cubic-bezier(.2,.7,.2,1)}
+.drop:hover{border-color:var(--accent);box-shadow:0 6px 18px rgba(16,24,40,.08)}
+.drop:hover::before{transform:translateY(-3px)}
+.drop.over{transform:scale(1.012);border-style:solid;box-shadow:0 10px 28px color-mix(in srgb,var(--accent) 24%,transparent)}
+.drop.over::before{animation:dropBob .7s ease-in-out infinite}
+@keyframes dropBob{50%{transform:translateY(-6px)}}
+#fileList{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:6px}
+#fileList .fchip{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+#fileList .fchip span{overflow:hidden;text-overflow:ellipsis}
+#fileList .ftotal{font-size:12px;color:var(--muted);align-self:center}
+@media (prefers-reduced-motion:reduce){
+  .drop::before,.drop.over::before,#jobs .bar i,.wftab.on .n{animation:none!important;transition:none!important}
+  .drop.over{transform:none}
+}

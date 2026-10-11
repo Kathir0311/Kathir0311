@@ -49,6 +49,8 @@ window.UA = (function () {
       let d = {};
       try { d = await r.json(); } catch (e) { d = { error: 'server error ' + r.status }; }
       if (!r.ok && !d.error) d.error = 'server error ' + r.status;
+      // V4.30: the answer to a change of the tags says what it changed — the editor (static/editor.js) applies it
+      if (d && d.patch && d.patch.base) (window.UA_PATCHES = window.UA_PATCHES || {})[d.patch.base] = d.patch;
       if (r.status === 423 && d.locked) {            // somebody took the file while this page was open
         document.body.classList.add('lockedview');
         window.LOCKSTATE = { ...(window.LOCKSTATE || {}), mine: false, holder: d.by || '', reason: d.error };

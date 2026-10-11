@@ -6,9 +6,11 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%232862e8'/%3E%3Cstop offset='1' stop-color='%237a3cc2'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='43' font-family='Arial,sans-serif' font-size='28' font-weight='700' text-anchor='middle' fill='white'%3EUA%3C/text%3E%3C/svg%3E">
 <title>{% block title %}Dezquare PDF Accessibility Studio{% endblock %}</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_v }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='ui.css') }}?v={{ asset_v }}">
+{% block head %}{% endblock %}
 {% if me %}<script src="{{ url_for('static', filename='tabguard.js') }}?v={{ asset_v }}"></script>{% endif %}
 </head>
-<body class="{% block bodyclass %}{% endblock %}{% if me %} role-{{ my_role }}{% if not can_upload %} noanalyse{% endif %}{% endif %}">
+<body class="{% block bodyclass %}{% endblock %}{% if me %} role-{{ my_role }}{% if not my_rights.reanalyse %} noanalyse{% endif %}{% if not my_rights.build %} noright-build{% endif %}{% if not my_rights.download %} noright-download{% endif %}{% if not my_rights.use_ai %} noright-ai{% endif %}{% endif %}">
 <header class="topbar">
   <a class="brand" href="{{ url_for('index') }}"><span class="mark">UA</span><span class="brandname"> Dezquare PDF Accessibility Studio</span></a>
   {% block nav %}

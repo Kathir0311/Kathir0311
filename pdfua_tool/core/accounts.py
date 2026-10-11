@@ -17,13 +17,17 @@ the admin account "Kathir". The work log (activity.log, one JSON line per
 action) records who did what to which file and when."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
 import threading
+import time
 from datetime import datetime
 
 from werkzeug.security import check_password_hash, generate_password_hash
+
+from . import rights as R
 
 ROLES = ("admin", "production", "qa", "final_qa", "user")
 ROLE_NAMES = "admin, production, qa or final_qa"
@@ -50,6 +54,7 @@ class Accounts:
         self.log_path = log_path
         self._data: dict | None = None
         self._mtime = 0.0
+        self._ok: dict[str, tuple[str, float]] = {}        # username -> (tag of the stored hash + password, when it was found right)
 
     # ------------------------------------------------------------ storage
     def _load(self) -> dict:
@@ -111,14 +116,31 @@ class Accounts:
 
     @staticmethod
     def public(u: dict) -> dict:
-        return {k: u.get(k, "") for k in ("username", "name", "role", "active", "created", "last_login",
+        out = {k: u.get(k, "") for k in ("username", "name", "role", "active", "created", "last_login",
                                          "email", "note")}
+        out["rights"] = R.explicit(u)                      # V4.30: what an admin set for this person (see core/rights.py)
+        out["effective"] = R.effective(u)
+        return out
 
     def check(self, username: str, password: str) -> dict | None:
         u = self.get(username)
-        if u is None or not u.get("active", True) or not check_password_hash(u.get("pw", ""), password or ""):
+        if u is None or not u.get("active", True):
+            return None
+        # V4.30: a script that sends the password with every request (HTTP Basic) paid ~0.4 s of hashing each time.
+        # What was found right is remembered for a minute — against the same stored hash only, so a changed password
+        # (or an account switched off) is refused at once.
+        tag = hashlib.sha256((u.get("pw", "") + "\0" + (password or "")).encode("utf-8")).hexdigest()
+        now = time.time()
+        with _LOCK:
+            if self._ok.get(u["username"].lower()) and self._ok[u["username"].lower()][0] == tag \
+                    and now - self._ok[u["username"].lower()][1] < 60:
+                return u
+        if not check_password_hash(u.get("pw", ""), password or ""):
             return None
         with _LOCK:
+            self._ok[u["username"].lower()] = (tag, now)
+            if len(self._ok) > 500:
+                self._ok.clear()
             u["last_login"] = _now()
             self._save()
         return u
@@ -163,6 +185,11 @@ class Accounts:
             for k in ("name", "email", "note"):
                 if kw.get(k) is not None:
                     u[k] = str(kw[k])[:300]
+            if kw.get("rights") is not None:                    # V4.30: {"delete_files": false, "see_all": true, "build": null}
+                try:
+                    u["rights"] = R.clean(u.get("rights"), kw["rights"])
+                except ValueError as exc:
+                    raise AccountError(str(exc))
             if kw.get("password"):
                 if len(kw["password"]) < 6:
                     raise AccountError("the password needs at least 6 characters")

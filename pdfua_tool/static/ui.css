@@ -1,0 +1,28 @@
+/* Dezquare PDF Accessibility Studio — what the pages share (V4.30): filters you can see and clear, empty states, and a little motion
+   that never runs when the person asked their system for less of it. Everything that moves uses transform / opacity. */
+.fsearch{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:8px;padding:0 8px;background:var(--panel-2);transition:border-color .15s,box-shadow .15s}
+.fsearch:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+.fsearch input[type=search]{border:0!important;box-shadow:none!important;background:transparent;min-width:240px;padding-left:2px}
+.resetbtn:disabled{opacity:.5}
+.filtered .resetbtn:not(:disabled){border-color:var(--accent);color:var(--accent);animation:resetPulse 1.8s ease-in-out 2}
+@keyframes resetPulse{50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent)}}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0}
+.fchip{display:inline-flex;align-items:center;gap:4px;font-size:12px;border-radius:999px;padding:2px 4px 2px 10px;background:var(--accent-soft);color:var(--accent);animation:chipIn .22s cubic-bezier(.2,.7,.2,1) both;white-space:nowrap;max-width:100%}
+.fchip button{border:0;background:transparent;color:inherit;padding:0 5px;border-radius:999px;font-size:11px;line-height:18px;cursor:pointer;transition:background .12s,transform .12s}
+.fchip button:hover{background:color-mix(in srgb,var(--accent) 22%,transparent);transform:scale(1.15)}
+@keyframes chipIn{from{opacity:0;transform:scale(.85) translateY(3px)}to{opacity:1;transform:none}}
+@keyframes panelIn{from{opacity:0;transform:translateY(-6px) scaleY(.96)}to{opacity:1;transform:none}}
+.morerow{display:flex;justify-content:center;padding:10px}
+.emptystate{display:flex;flex-direction:column;align-items:center;gap:6px;padding:34px 12px;text-align:center;animation:panelIn .3s both}
+.emptystate.hidden{display:none}
+.emptystate .eico{font-size:34px;animation:floaty 3s ease-in-out infinite}
+@keyframes floaty{50%{transform:translateY(-5px)}}
+.selbanner{margin:6px 0;padding:6px 12px;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:12px;animation:chipIn .22s both}
+/* a card slides in when the page shows it (only the ones the script marks) */
+.card.reveal,.ucard.reveal{opacity:0;transform:translateY(12px)}
+.card.reveal.in,.ucard.reveal.in{opacity:1;transform:none;transition:opacity .45s ease,transform .45s cubic-bezier(.2,.7,.2,1);transition-delay:calc(var(--ri,0) * 45ms)}
+@media (prefers-reduced-motion:reduce){
+  .fchip,.selbanner,.emptystate,.emptystate .eico,.card.reveal,.ucard.reveal{animation:none!important;transition:none!important}
+  .card.reveal,.ucard.reveal{opacity:1;transform:none}
+  .filtered .resetbtn:not(:disabled){animation:none}
+}

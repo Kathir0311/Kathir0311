@@ -32,6 +32,10 @@
     if (tab === 'brain') { loadBrain(); kbSearch(); }
     if (tab === 'system') loadSystem();
     if (tab === 'workflow') loadWorkflow();
+    if (tab === 'time') loadTime();
+    const pane = $('pane-' + tab);
+    if (pane) { pane.classList.remove('tabin'); void pane.offsetWidth; pane.classList.add('tabin'); }
+    revealCards(pane);
   }
   document.querySelectorAll('.atabs button').forEach((b) => b.addEventListener('click', () => show(b.dataset.tab)));
   document.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => show(b.dataset.goto)));
@@ -54,18 +58,19 @@
     return (h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening') + (window.ME ? ', ' + window.ME : '');
   }
   async function overview() {
-    const d = await UA.get('/api/admin/overview');
+    const [d, today] = await Promise.all([UA.get('/api/admin/overview'), UA.get('/api/admin/time?days=1').catch(() => null)]);
     if (!d || d.error) return;
     const tile = (big, label, sub, cls, go) => {
       const t = el('div', { class: 'tile ' + (cls || '') + (go ? ' link' : ''), title: go ? 'Show these files' : '' },
-        el('div', { class: 'tbig', 'data-n': big, text: String(big) }), el('div', { class: 'tlabel', text: label }),
+        el('div', { class: 'tbig', 'data-n': typeof big === 'number' ? big : '', text: String(big) }), el('div', { class: 'tlabel', text: label }),
         sub ? el('div', { class: 'tsub', text: sub }) : null);
       if (go) t.addEventListener('click', go);
       return t;
     };
     const filt = (o) => () => {
-      ['fUser', 'fWork', 'fStage', 'fFolder', 'fPrio', 'fProfile'].forEach((id) => { $(id).value = ''; });
+      clearFilters();
       Object.entries(o).forEach(([k, v]) => { $(k).value = v; });
+      shownLimit = PAGE;
       show('files');
     };
     const open = d.users.reduce((a, u) => a + u.open, 0);
@@ -82,8 +87,11 @@
       tile((d.work.approved || 0) + (d.work.delivered || 0), 'ready / delivered', `${(d.approved_pages || 0).toLocaleString()} pages done`, 't-done', filt({ fWork: 'approved' })),
       tile(d.overdue || 0, 'overdue', `${d.urgent || 0} urgent open`, d.overdue ? 'bad' : 't-due', filt({ fSort: 'due' })),
       tile(d.busy, 'working now', d.failed ? `${d.failed} failed` : 'none failed', d.failed ? 'bad' : 't-busy', d.failed ? filt({ fStage: 'error' }) : null),
-      tile(pct, '% errors fixed', `${fx.before || 0} → ${fx.after || 0} checker errors`, 't-fix'));
+      tile(pct, '% errors fixed', `${fx.before || 0} → ${fx.after || 0} checker errors`, 't-fix'),
+      today && !today.error ? tile(dur((today.work_s || 0) + (today.qc_s || 0)), 'worked today',
+        `${today.users.length} people · ${dur(today.work_s || 0)} working · ${dur(today.qc_s || 0)} QC`, 't-time', () => show('time')) : null);
     $('aTiles').querySelectorAll('.tbig').forEach(countUp);
+    revealCards($('pane-overview'));
     $('poolCount').textContent = d.pool.files ? String(d.pool.files) : '';
     // last 14 days
     const tmax = Math.max(1, ...d.trend.map((t) => Math.max(t.uploaded, t.built, t.approved)));
@@ -165,6 +173,37 @@
   ovLoop();
 
   // ------------------------------------------------------------ files
+  // V4.30: more filters (a panel of its own), the filters in use as chips, a Reset, views to keep, the working time of
+  // every file, and a list that draws 200 rows at a time (a long list used to be drawn whole at every key typed)
+  const PAGE = 200;
+  let shownLimit = PAGE;
+  const dur = (s) => s < 60 ? `${Math.round(s || 0)} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.floor(s / 3600)} h ${String(Math.round(s % 3600 / 60)).padStart(2, '0')} min`;
+  const BASIC = ['fSearch', 'fUser', 'fWork', 'fStage', 'fFolder', 'fProfile', 'fPrio', 'fSort'];
+  const ADV = ['fUpFrom', 'fUpTo', 'fDueFrom', 'fDueTo', 'fOverdue', 'fPgMin', 'fPgMax', 'fErrMin', 'fHasErr', 'fWorkMin', 'fQcMin',
+    'fWorkedBy', 'fNoTime', 'fChecker', 'fLocked', 'fComments', 'fRework', 'fBuilt'];
+  const STAGE_NAME = { active: 'working now', review: 'to review', done: 'built', error: 'failed', question: 'tags found' };
+  const CHIPS = {
+    fSearch: (v) => `Search “${v}”`, fUser: (v) => v === '-' ? 'Not given (pool)' : `Given to ${v}`, fWork: (v) => `Work: ${STATES[v] || v}`,
+    fStage: (v) => `Tool: ${STAGE_NAME[v] || v}`, fFolder: (v) => `Folder ${v}`, fProfile: (v) => `Profile ${v}`, fPrio: (v) => `Priority ${v}`,
+    fUpFrom: (v) => `Uploaded from ${v}`, fUpTo: (v) => `Uploaded until ${v}`, fDueFrom: (v) => `Due from ${v}`, fDueTo: (v) => `Due until ${v}`,
+    fOverdue: () => 'Overdue', fPgMin: (v) => `≥ ${v} pages`, fPgMax: (v) => `≤ ${v} pages`, fErrMin: (v) => `≥ ${v} errors left`,
+    fHasErr: () => 'Errors left', fWorkMin: (v) => `Working ≥ ${v} min`, fQcMin: (v) => `QC ≥ ${v} min`, fWorkedBy: (v) => `Worked on by ${v}`,
+    fNoTime: () => 'Nobody worked on it', fChecker: (v) => `QA / Final QA ${v}`, fLocked: () => 'Being edited now',
+    fComments: () => 'Open comments', fRework: () => 'In rework', fBuilt: (v) => ({ yes: 'Built', no: 'Not built', stale: 'Changed since the build' }[v] || v),
+  };
+  const isCheck = (id) => $(id).type === 'checkbox';
+  const readFilters = () => Object.fromEntries([...BASIC, ...ADV].map((id) => [id, isCheck(id) ? $(id).checked : $(id).value]));
+  function writeFilters(o) {
+    [...BASIC, ...ADV].forEach((id) => {
+      const v = o ? o[id] : undefined;
+      if (isCheck(id)) $(id).checked = !!v; else $(id).value = v === undefined || v === null ? (id === 'fSort' ? 'new' : '') : v;
+    });
+  }
+  function clearFilters() { writeFilters(null); }
+  const activeFilters = () => { const o = readFilters(); return Object.keys(CHIPS).filter((id) => (isCheck(id) ? o[id] : o[id] !== '' && o[id] != null)).map((id) => ({ id, text: CHIPS[id](o[id]) })); };
+  const lsGet = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v === null || v === undefined ? d : v; } catch (e) { return d; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* no storage: the filters are not kept */ } };
+  let restored = false;
   async function loadFiles() {
     files = await UA.get('/api/admin/files');
     const folders = [...new Set(files.map((f) => f.batch_name || '').filter(Boolean))].sort();
@@ -172,6 +211,12 @@
     const cur = fs.value;
     fs.replaceChildren(new Option('Every folder', ''), ...folders.map((f) => new Option(f, f)));
     fs.value = folders.includes(cur) ? cur : '';
+    if (!restored) {                                  // the filters the admin had the last time
+      restored = true;
+      const saved = lsGet('ua-admin-filters', null);
+      if (saved && !activeFilters().length) { writeFilters(saved); if (activeFilters().length) UA.toast('Your filters from last time are on — ↺ Reset filters clears them', 3600); }
+      fillViews();
+    }
     for (const id of [...sel]) if (!files.some((f) => f.id === id)) sel.delete(id);
     renderFiles();
     if (files.some((f) => ['queued', 'processing', 'building'].includes(f.stage))) {
@@ -179,22 +224,52 @@
       loadFiles.t = setTimeout(() => { if (!$('pane-files').classList.contains('hidden')) loadFiles(); }, 2500);
     }
   }
-  function shownFiles() {
-    const q = ($('fSearch').value || '').toLowerCase().trim();
-    const u = $('fUser').value, w = $('fWork').value, st = $('fStage').value, fo = $('fFolder').value, pr = $('fPrio').value, pf = $('fProfile').value;
-    let out = files.filter((f) => {
-      if (q && !`${f.filename} ${f.batch_name} ${f.rel_path} ${f.title} ${f.assigned_to} ${f.owner} ${f.profile}`.toLowerCase().includes(q)) return false;
-      if (u === '-' && f.assigned_to) return false;
-      if (u && u !== '-' && (f.assigned_to || '').toLowerCase() !== u.toLowerCase()) return false;
-      if (w && f.work !== w) return false;
-      if (st === 'active' && !['queued', 'processing', 'building'].includes(f.stage)) return false;
-      if (st && st !== 'active' && f.stage !== st) return false;
-      if (fo && f.batch_name !== fo) return false;
-      if (pr && f.priority !== pr) return false;
-      if (pf && (f.profile || 'Default') !== pf) return false;
+  function matcher() {
+    const o = readFilters();
+    const q = o.fSearch.toLowerCase().trim();
+    const today = new Date().toISOString().slice(0, 10);
+    const num = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
+    const wmin = num(o.fWorkMin), qmin = num(o.fQcMin), pmin = num(o.fPgMin), pmax = num(o.fPgMax), emin = num(o.fErrMin);
+    const wb = (o.fWorkedBy || '').toLowerCase(), ck = (o.fChecker || '').toLowerCase();
+    const day = (iso) => (iso || '').slice(0, 10);
+    return (f) => {
+      if (q && !`${f.filename} ${f.batch_name} ${f.rel_path} ${f.title} ${f.assigned_to} ${f.owner} ${f.profile} ${f.qa_user} ${f.fqa_user}`.toLowerCase().includes(q)) return false;
+      if (o.fUser === '-' && f.assigned_to) return false;
+      if (o.fUser && o.fUser !== '-' && (f.assigned_to || '').toLowerCase() !== o.fUser.toLowerCase()) return false;
+      if (o.fWork && f.work !== o.fWork) return false;
+      if (o.fStage === 'active' && !['queued', 'processing', 'building'].includes(f.stage)) return false;
+      if (o.fStage && o.fStage !== 'active' && f.stage !== o.fStage) return false;
+      if (o.fFolder && f.batch_name !== o.fFolder) return false;
+      if (o.fPrio && f.priority !== o.fPrio) return false;
+      if (o.fProfile && (f.profile || 'Default') !== o.fProfile) return false;
+      if (o.fUpFrom && day(f.created) < o.fUpFrom) return false;
+      if (o.fUpTo && day(f.created) > o.fUpTo) return false;
+      if (o.fDueFrom && (!f.due || f.due < o.fDueFrom)) return false;
+      if (o.fDueTo && (!f.due || f.due > o.fDueTo)) return false;
+      if (o.fOverdue && !(f.due && f.due < today && !['approved', 'delivered'].includes(f.work))) return false;
+      if (pmin !== null && (f.pages || 0) < pmin) return false;
+      if (pmax !== null && (f.pages || 0) > pmax) return false;
+      const err = f.errors_after != null ? f.errors_after : (f.errors_before || 0);
+      if (emin !== null && err < emin) return false;
+      if (o.fHasErr && !(err > 0)) return false;
+      if (wmin !== null && (f.work_s || 0) < wmin * 60) return false;
+      if (qmin !== null && (f.qc_s || 0) < qmin * 60) return false;
+      if (wb && !(f.time_by || []).some((x) => x.user.toLowerCase() === wb)) return false;
+      if (o.fNoTime && ((f.work_s || 0) + (f.qc_s || 0)) > 0) return false;
+      if (ck && (f.qa_user || '').toLowerCase() !== ck && (f.fqa_user || '').toLowerCase() !== ck) return false;
+      if (o.fLocked && !f.locked_by) return false;
+      if (o.fComments && !(f.comments_open > 0)) return false;
+      if (o.fRework && !(f.rework > 0)) return false;
+      if (o.fBuilt === 'yes' && !f.built) return false;
+      if (o.fBuilt === 'no' && f.built) return false;
+      if (o.fBuilt === 'stale' && !(f.built && f.dirty)) return false;
       return true;
-    });
+    };
+  }
+  function shownFiles() {
+    let out = files.filter(matcher());
     const by = $('fSort').value;
+    const tot = (f) => (f.work_s || 0) + (f.qc_s || 0);
     const cmp = {
       new: (a, b) => (b.created || '').localeCompare(a.created || ''),
       old: (a, b) => (a.created || '').localeCompare(b.created || ''),
@@ -203,6 +278,10 @@
       due: (a, b) => (a.due || '9999').localeCompare(b.due || '9999'),
       prio: (a, b) => (PRIO[a.priority] ?? 2) - (PRIO[b.priority] ?? 2),
       user: (a, b) => (a.assigned_to || '~').localeCompare(b.assigned_to || '~'),
+      edited: (a, b) => (b.edited || '').localeCompare(a.edited || ''),
+      time: (a, b) => tot(b) - tot(a),
+      timeasc: (a, b) => tot(a) - tot(b),
+      errors: (a, b) => ((b.errors_after ?? b.errors_before) || 0) - ((a.errors_after ?? a.errors_before) || 0),
     }[by];
     if (cmp) out = [...out].sort(cmp);
     return out;
@@ -215,17 +294,40 @@
     const name = { done: 'built', review: 'to review', error: 'failed', question: 'tags found' }[f.stage] || f.stage;
     return el('span', { class: 'chip ' + (f.stage === 'done' ? 'ok' : f.stage === 'error' ? 'err' : ''), title: f.error || '', text: name });
   }
+  function timeCell(f) {
+    const w = f.work_s || 0, q = f.qc_s || 0;
+    if (!w && !q) return el('td', { class: 'timecell muted', text: '—' });
+    const who = (f.time_by || []).map((x) => `${x.user}: ${dur(x.work_s)} working${x.qc_s ? ' · ' + dur(x.qc_s) + ' QC' : ''}`).join('\n');
+    return el('td', { class: 'timecell', title: (who ? who + '\n' : '') + 'Only the time people were active — breaks are left out' },
+      el('b', { text: dur(w + q) }),
+      el('div', { class: 'tiny muted', text: [w ? `working ${dur(w)}` : '', q ? `QC ${dur(q)}` : ''].filter(Boolean).join(' · ') }));
+  }
+  function renderChips() {
+    const act = activeFilters();
+    const box = $('fChips');
+    box.replaceChildren(...act.map((c) => el('span', { class: 'fchip' }, c.text,
+      el('button', { type: 'button', 'aria-label': 'Remove: ' + c.text, title: 'Remove this filter', text: '✕', onclick: () => { if (isCheck(c.id)) $(c.id).checked = false; else $(c.id).value = ''; shownLimit = PAGE; renderFiles(); } }))));
+    const advN = act.filter((c) => ADV.includes(c.id)).length;
+    $('fAdvN').textContent = String(advN);
+    $('fAdvN').classList.toggle('hidden', !advN);
+    const moved = $('fSort').value !== 'new';
+    $('fReset').disabled = !act.length && !moved;
+    $('filterBar').classList.toggle('filtered', act.length > 0);
+    return act;
+  }
   function renderFiles() {
     const list = shownFiles();
+    renderChips();
+    lsSet('ua-admin-filters', readFilters());
     const tb = $('fTable').querySelector('tbody');
     const frag = document.createDocumentFragment();
     const today = new Date().toISOString().slice(0, 10);
-    list.slice(0, 800).forEach((f, i) => {
+    list.slice(0, shownLimit).forEach((f, i) => {
       const ck = el('input', { type: 'checkbox', 'aria-label': 'select ' + f.filename });
       ck.checked = sel.has(f.id);
       ck.addEventListener('change', () => { ck.checked ? sel.add(f.id) : sel.delete(f.id); bulkState(); tr.classList.toggle('picked', ck.checked); });
       const errs = f.errors_after != null ? `${f.errors_before ?? ''} → ${f.errors_after}` : (f.errors_before ?? '');
-      const tr = el('tr', { class: 'frow' + (sel.has(f.id) ? ' picked' : '') + (openRow === f.id ? ' open' : ''), style: `animation-delay:${Math.min(i, 25) * 12}ms` },
+      const tr = el('tr', { class: 'frow' + (sel.has(f.id) ? ' picked' : '') + (openRow === f.id ? ' open' : ''), style: `animation-delay:${Math.min(i, 20) * 12}ms` },
         el('td', { class: 'ck' }, ck),
         el('td', {}, el('a', { href: '/job/' + f.id + (f.locked_by ? '?view=1' : ''), text: f.filename }),
           f.locked_by ? el('button', { class: 'lockbadge', type: 'button', title: `${f.locked_by} has this file open${f.lock_idle_s > 60 ? ' (idle ' + Math.round(f.lock_idle_s / 60) + ' min)' : ''} — click to unlock it`,
@@ -247,6 +349,7 @@
         el('td', {}, el('span', { class: 'prio p-' + f.priority, text: f.priority })),
         el('td', { class: f.due && f.due < today && f.work !== 'approved' ? 'late' : '', text: f.due || '' }),
         el('td', { text: String(f.pages || '') }),
+        timeCell(f),
         el('td', {}, stageChip(f)),
         el('td', { text: String(errs) }),
         el('td', { class: 'small', text: f.owner || '—' }),
@@ -257,9 +360,13 @@
     });
     tb.replaceChildren(frag);
     $('fEmpty').classList.toggle('hidden', list.length > 0);
-    $('fCount').textContent = `${list.length} of ${files.length} file(s)` + (list.length > 800 ? ' — the first 800 shown' : '');
+    $('fTable').classList.toggle('hidden', list.length === 0);
+    const left = list.length - shownLimit;
+    $('fMoreRow').classList.toggle('hidden', left <= 0);
+    $('fMore').textContent = `Show ${Math.min(PAGE, left)} more (${left} left)`;
+    $('fCount').textContent = `${list.length} of ${files.length} file(s)`;
     $('ckAll').checked = list.length > 0 && list.every((f) => sel.has(f.id));
-    bulkState();
+    bulkState(list);
   }
   function detailRow(f) {
     const fact = (k, v) => (v === undefined || v === null || v === '') ? null : el('div', { class: 'fact' }, el('span', { text: k }), el('b', { text: String(v) }));
@@ -267,6 +374,7 @@
       fact('Profile', f.profile), fact('Mode', f.mode === 'import' ? 'existing tags' : f.mode ? 'auto-tagged' : ''), fact('Tags', f.nodes || ''),
       fact('Language', f.lang), fact('Pages', f.pages), fact('Checker errors', f.errors_after != null ? `${f.errors_before} → ${f.errors_after}` : f.errors_before),
       fact('Changed by samples', f.samples_changed ? `${f.samples_changed} tag(s)` : ''), fact('Approved', fmt(f.approved_at)),
+      fact('Working time', f.work_s ? dur(f.work_s) : ''), fact('QC time', f.qc_s ? dur(f.qc_s) : ''),
       f.sample_id ? el('div', { class: 'fact' }, el('span', { text: 'Sample' }), el('a', { href: '#', text: 'this file teaches the tool', onclick: (e) => { e.preventDefault(); showSample(f.sample_id); } })) : null,
       (f.profile_history || []).length ? fact('Profile changes', f.profile_history.map((h) => `${h.from} → ${h.to}`).join(', ')) : null);
     const acts = el('div', { class: 'btnrow' },
@@ -276,7 +384,13 @@
         if (!r.error) UA.toast(r.added ? 'Added to the samples — learning now' : 'Not analysed yet');
       } }),
       el('button', { class: 'sm', text: 'Build', onclick: async () => after(await post('/api/admin/files/build', { ids: [f.id] }), 'Build started') }));
-    const box = el('div', { class: 'fdetail' }, facts, acts,
+    const tmBox = el('div', { class: 'tmbox' });
+    if (f.time_by && f.time_by.length) {
+      tmBox.append(el('h4', { text: 'Who spent the time' }),
+        el('table', { class: 'list mini' }, el('thead', {}, el('tr', {}, el('th', { text: 'Person' }), el('th', { text: 'Working' }), el('th', { text: 'QC' }), el('th', { text: 'Last' }))),
+          el('tbody', {}, ...f.time_by.map((x) => el('tr', {}, el('td', { text: x.user }), el('td', { text: dur(x.work_s) }), el('td', { text: x.qc_s ? dur(x.qc_s) : '—' }), el('td', { class: 'tiny muted', text: fmt(x.last) }))))));
+    }
+    const box = el('div', { class: 'fdetail' }, facts, acts, tmBox,
       el('div', {}, el('h4', { text: 'Notes' }),
         f.notes && f.notes.length ? el('ul', { class: 'notes' }, ...f.notes.map((n) => el('li', {}, el('b', { text: n.by }), ` ${fmt(n.at)}${n.action && n.action !== 'note' ? ' · ' + n.action : ''} — `, n.text)))
           : el('p', { class: 'small muted', text: 'No notes.' })),
@@ -292,17 +406,88 @@
       ol.replaceChildren(...(log.length ? log.map((e) => el('li', {}, el('b', { text: e.by }), ` ${e.action}${e.detail ? ' — ' + e.detail : ''}`, el('span', { class: 'tiny muted', text: ' ' + fmt(e.at) })))
         : [el('li', { class: 'muted', text: 'Nothing recorded yet.' })]));
     });
-    const td = el('td', { colspan: 12 }, box);
+    const td = el('td', { colspan: 13 }, box);
     return el('tr', { class: 'detailrow' }, td);
   }
-  function bulkState() {
+  function bulkState(list) {
     const n = sel.size;
     $('selCount').textContent = n ? `${n} selected` : 'Select files to act on them';
     $('bulkBar').classList.toggle('active', n > 0);
     $('bulkBar').querySelectorAll('button, select, input').forEach((b) => { b.disabled = !n; });
+    // all that match are selected, and not all of them are drawn
+    const ban = $('fSelBanner');
+    const all = list || shownFiles();
+    const hidden = all.length - shownLimit;
+    const allSel = all.length > 0 && all.every((f) => sel.has(f.id));
+    ban.classList.toggle('hidden', !(allSel && hidden > 0));
+    if (allSel && hidden > 0) ban.textContent = `All ${all.length} files that match are selected — ${hidden} of them are not drawn yet.`;
   }
-  ['fSearch', 'fUser', 'fWork', 'fStage', 'fFolder', 'fPrio', 'fProfile', 'fSort'].forEach((id) =>
-    $(id).addEventListener(id === 'fSearch' ? 'input' : 'change', renderFiles));
+  // the filters
+  let filterT = null;
+  const onFilter = (id) => () => {
+    shownLimit = PAGE;
+    if (id === 'fSearch') { clearTimeout(filterT); filterT = setTimeout(renderFiles, 130); } else renderFiles();
+  };
+  [...BASIC, ...ADV].forEach((id) => $(id).addEventListener(id === 'fSearch' || $(id).type === 'number' || $(id).type === 'date' ? 'input' : 'change', onFilter(id)));
+  function resetFilters() { clearFilters(); shownLimit = PAGE; $('fViews').value = ''; $('fDelView').hidden = true; renderFiles(); UA.toast('Filters cleared', 1600); }
+  $('fReset').addEventListener('click', resetFilters);
+  $('fEmptyReset').addEventListener('click', resetFilters);
+  $('fMore').addEventListener('click', () => { shownLimit += PAGE; renderFiles(); });
+  $('fAdv').addEventListener('click', () => {
+    const open = $('fAdvPanel').classList.toggle('hidden') === false;
+    $('fAdv').setAttribute('aria-expanded', String(open));
+  });
+  $('fSearch').addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('fSearch').value) { $('fSearch').value = ''; onFilter('fSearch')(); } });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey && !$('pane-files').classList.contains('hidden') && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName || ''))) {
+      e.preventDefault();
+      $('fSearch').focus();
+    }
+  });
+  // views (a set of filters kept under a name)
+  function fillViews() {
+    const vs = lsGet('ua-admin-views', []);
+    $('fViews').replaceChildren(new Option('Saved views…', ''), ...vs.map((v, i) => new Option(v.name, String(i))));
+  }
+  $('fViews').addEventListener('change', () => {
+    const vs = lsGet('ua-admin-views', []);
+    const v = vs[Number($('fViews').value)];
+    $('fDelView').hidden = !v;
+    if (v) { writeFilters(v.state); shownLimit = PAGE; renderFiles(); }
+  });
+  $('fSave').addEventListener('click', () => {
+    const name = (prompt('Name this view (the filters and the sort as they are now):', '') || '').trim().slice(0, 40);
+    if (!name) return;
+    const vs = lsGet('ua-admin-views', []).filter((v) => v.name !== name);
+    vs.push({ name, state: readFilters() });
+    lsSet('ua-admin-views', vs.slice(-30));
+    fillViews();
+    $('fViews').value = String(vs.length - 1);
+    $('fDelView').hidden = false;
+    UA.toast(`View “${name}” kept`);
+  });
+  $('fDelView').addEventListener('click', () => {
+    const vs = lsGet('ua-admin-views', []);
+    const i = Number($('fViews').value);
+    if (!vs[i] || !confirm(`Delete the view “${vs[i].name}”?`)) return;
+    vs.splice(i, 1);
+    lsSet('ua-admin-views', vs);
+    fillViews();
+    $('fDelView').hidden = true;
+  });
+  $('fExport').addEventListener('click', () => {
+    const rows = shownFiles();
+    const q = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+    const head = ['file', 'folder', 'uploaded by', 'given to', 'work', 'step', 'profile', 'priority', 'due', 'pages', 'status', 'errors left', 'working time (min)', 'QC time (min)', 'time by'];
+    const lines = [head.map(q).join(',')].concat(rows.map((f) => [f.filename, f.batch_name, f.owner, f.assigned_to, STATES[f.work] || f.work, f.wstage_label, f.profile, f.priority, f.due, f.pages, f.stage,
+      f.errors_after != null ? f.errors_after : f.errors_before, Math.round((f.work_s || 0) / 6) / 10, Math.round((f.qc_s || 0) / 6) / 10,
+      (f.time_by || []).map((x) => `${x.user} ${Math.round(x.work_s / 60)}+${Math.round(x.qc_s / 60)} min`).join('; ')].map(q).join(',')));
+    const a = el('a', { href: URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' })), download: `files_${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}.csv` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    UA.toast(`${rows.length} file(s) exported`);
+  });
   $('ckAll').addEventListener('change', () => {
     const list = shownFiles();
     if ($('ckAll').checked) list.forEach((f) => sel.add(f.id)); else list.forEach((f) => sel.delete(f.id));
@@ -476,15 +661,22 @@
       });
       return el('label', { class: 'wfrule' }, cb, el('span', {}, el('b', { text: L[k][0] }), el('span', { class: 'tiny muted', text: L[k][1] })));
     }));
+    $('wfIdle').value = d.cfg.work_idle_s || 120;
   }
+  $('wfIdleSave').addEventListener('click', async () => {
+    const r = await post('/api/admin/workflow', { work_idle_s: Number($('wfIdle').value) });
+    if (!r.error) { $('wfIdle').value = r.cfg.work_idle_s; UA.toast(`A pause of more than ${r.cfg.work_idle_s} seconds is a break`); }
+  });
   $('wfRefresh').addEventListener('click', loadWorkflow);
 
   // ------------------------------------------------------------ users
   async function loadUsers() {
-    users = await UA.get('/api/admin/users');
-    const ov = await UA.get('/api/admin/overview');
+    let ov, tm;
+    [users, ov, tm] = await Promise.all([UA.get('/api/admin/users'), UA.get('/api/admin/overview'), UA.get('/api/admin/time?days=7').catch(() => null)]);
     const count = {};
     ov.users.forEach((u) => { count[u.username.toLowerCase()] = u.files; });
+    const spent = {};
+    ((tm && tm.users) || []).forEach((u) => { spent[u.user.toLowerCase()] = u; });
     const tb = $('uTable').querySelector('tbody');
     tb.replaceChildren(...users.map((u) => {
       const act = el('input', { type: 'checkbox', title: u.active ? 'Switch the account off' : 'Switch it on' });
@@ -498,6 +690,16 @@
           el('span', {}, el('b', { text: u.username }), el('div', { class: 'tiny muted', text: [u.name, u.email, u.note].filter(Boolean).join(' · ') })))),
         el('td', {}, el('span', { class: 'rolechip r-' + (u.role === 'user' ? 'production' : u.role), text: ROLE[u.role] || u.role })),
         el('td', { text: String(count[u.username.toLowerCase()] || 0) }),
+        (() => {
+          const t = spent[u.username.toLowerCase()];
+          return t ? el('td', { class: 'timecell', title: `${t.files} file(s), ${Object.keys(t.days).length} active day(s)` }, el('b', { text: dur(t.work_s + t.qc_s) }),
+            el('div', { class: 'tiny muted', text: `working ${dur(t.work_s)}${t.qc_s ? ' · QC ' + dur(t.qc_s) : ''}` })) : el('td', { class: 'muted small', text: '—' });
+        })(),
+        el('td', {}, (() => {
+          const n = Object.keys(u.rights || {}).length;
+          return u.role === 'admin' ? el('span', { class: 'tiny muted', text: 'everything' })
+            : el('button', { class: 'sm rightsbtn' + (n ? ' custom' : ''), type: 'button', title: 'What this person may do on top of the role', text: n ? `${n} custom` : 'role defaults', onclick: () => openRights(u) });
+        })()),
         el('td', { class: 'small', text: fmt(u.last_login) || 'never' }),
         el('td', {}, act),
         el('td', { class: 'right' },
@@ -547,6 +749,143 @@
     e.target.reset();
     loadUsers();
   });
+
+  // ------------------------------------------------------------ rights (V4.30)
+  let rgCat = null, rgUser = null, rgState = {};
+  async function openRights(u) {
+    if (!rgCat) { const c = await UA.get('/api/admin/rights'); if (!c || c.error) return; rgCat = c.rights; }
+    const all = await UA.get('/api/admin/users');
+    rgUser = all.find((x) => x.username === u.username) || u;
+    rgState = { ...(rgUser.rights || {}) };
+    $('rgName').textContent = rgUser.username;
+    $('rgRole').textContent = ROLE[rgUser.role] || rgUser.role;
+    $('rgRole').className = 'rolechip r-' + (rgUser.role === 'user' ? 'production' : rgUser.role);
+    $('rgOut').textContent = '';
+    drawRights();
+    $('rightsDlg').showModal();
+  }
+  function drawRights() {
+    const role = rgUser.role === 'user' ? 'production' : rgUser.role;
+    const admin = role === 'admin';
+    const groups = {};
+    rgCat.forEach((r) => { (groups[r.group] = groups[r.group] || []).push(r); });
+    $('rgList').replaceChildren(...Object.entries(groups).map(([g, rs]) => el('fieldset', { class: 'rggroup' }, el('legend', { text: g }),
+      ...rs.map((r) => {
+        const mine = rgState[r.key];                                     // true / false / undefined (the role's default)
+        const def = !!(r.default[role]);
+        const eff = admin ? true : (mine === undefined ? def : mine);
+        const opt = (val, text, title) => el('button', { type: 'button', role: 'radio', 'aria-checked': String(mine === val), class: 'rgopt' + (mine === val ? ' on' : '') + (val === true ? ' allow' : val === false ? ' deny' : ''),
+          title, disabled: admin, text, onclick: () => { if (val === undefined) delete rgState[r.key]; else rgState[r.key] = val; drawRights(); } });
+        return el('div', { class: 'rgrow' + (mine !== undefined ? ' set' : '') },
+          el('div', { class: 'rgtext' }, el('b', { text: r.label }), el('span', { class: 'tiny muted', text: r.help })),
+          el('div', { class: 'rgseg', role: 'radiogroup', 'aria-label': r.label },
+            opt(undefined, `Role default (${def ? 'yes' : 'no'})`, 'Follow the role'), opt(true, 'Allow', 'This person may'), opt(false, 'Deny', 'This person may not')),
+          el('span', { class: 'chip ' + (eff ? 'ok' : 'off'), text: eff ? 'may' : 'may not' }));
+      }))));
+    if (admin) $('rgOut').textContent = 'An admin can always do everything — rights narrow or widen the others only.';
+  }
+  $('rgSave').addEventListener('click', async () => {
+    const body = {};
+    rgCat.forEach((r) => { body[r.key] = rgState[r.key] === undefined ? null : rgState[r.key]; });
+    const r = await post('/api/admin/users/' + encodeURIComponent(rgUser.username), { rights: body });
+    if (r.error) { $('rgOut').textContent = r.error; return; }
+    $('rightsDlg').close();
+    UA.toast(`Rights of ${rgUser.username} saved`);
+    loadUsers();
+  });
+  $('rgReset').addEventListener('click', () => { rgState = {}; drawRights(); });
+
+  // ------------------------------------------------------------ working time (V4.30)
+  let tmDays = 7, tmData = null;
+  async function loadTime() {
+    const user = $('tmUser').value;
+    $('tmReset').disabled = !user && tmDays === 7;
+    const d = await UA.get(`/api/admin/time?days=${tmDays}` + (user ? '&user=' + encodeURIComponent(user) : ''));
+    if (!d || d.error) return;
+    tmData = d;
+    const total = d.work_s + d.qc_s;
+    const nfiles = d.users.reduce((a, u) => a + u.files, 0);
+    const active = d.users.reduce((a, u) => a + Object.keys(u.days).length, 0);
+    const tile = (big, label, sub, cls) => el('div', { class: 'tile ' + cls }, el('div', { class: 'tbig', text: String(big) }), el('div', { class: 'tlabel', text: label }), sub ? el('div', { class: 'tsub', text: sub }) : null);
+    $('tmSub').textContent = `Only the time people are active in a file — a pause of more than ${Math.round((d.idle_limit || 120) / 6) / 10} minutes is a break and is left out. From ${d.since}.`;
+    $('tmTiles').replaceChildren(
+      tile(dur(d.work_s), 'working', 'production and rework', 't-open'),
+      tile(dur(d.qc_s), 'QC', 'QA and Final QA', 't-check'),
+      tile(d.users.length, 'people', active ? `${dur(total / Math.max(1, active))} per person and active day` : 'nobody worked yet', 't-files'),
+      tile(nfiles, 'files worked on', 'summed over the people', 't-done'));
+    // day by day (every day of the range, also the empty ones)
+    const days = [];
+    for (let i = d.days - 1; i >= 0; i--) { const t = new Date(); t.setDate(t.getDate() - i); days.push(t.toISOString().slice(0, 10)); }
+    const by = Object.fromEntries(d.per_day.map((x) => [x.day, x]));
+    const max = Math.max(1, ...days.map((k) => (by[k] ? by[k].work_s + by[k].qc_s : 0)));
+    $('tmDays').replaceChildren(...days.map((k, i) => {
+      const x = by[k] || { work_s: 0, qc_s: 0 };
+      return el('div', { class: 'sday', title: `${k}: working ${dur(x.work_s)}, QC ${dur(x.qc_s)}` },
+        el('div', { class: 'sbars stack' },
+          el('i', { class: 'up', style: `height:${100 * x.work_s / max}%;animation-delay:${i * 18}ms` }),
+          el('i', { class: 'ap', style: `height:${100 * x.qc_s / max}%;animation-delay:${i * 18 + 50}ms` })),
+        el('span', { text: d.days <= 14 ? day(k) : (i % 7 === 0 ? k.slice(5) : '') }));
+    }));
+    const umax = Math.max(1, ...d.users.map((u) => u.work_s + u.qc_s));
+    $('tmBars').replaceChildren(...(d.users.length ? d.users.slice(0, 12).map((u, i) => el('div', { class: 'hbar link', title: 'Their files', onclick: () => { clearFilters(); $('fWorkedBy').value = u.user; shownLimit = PAGE; show('files'); $('fAdvPanel').classList.remove('hidden'); } },
+      el('span', { class: 'hk', text: u.user }),
+      el('div', { class: 'ht' }, el('i', { class: 'info', style: `width:${100 * u.work_s / umax}%;animation-delay:${i * 40}ms` }), el('i', { class: 'warn', style: `width:${100 * u.qc_s / umax}%;animation-delay:${i * 40 + 60}ms` })),
+      el('b', { text: dur(u.work_s + u.qc_s) }))) : [el('p', { class: 'small muted', text: 'Nobody worked in this period.' })]));
+    $('tmTable').querySelector('tbody').replaceChildren(...(d.users.length ? d.users.map((u) => el('tr', { class: 'frow' },
+      el('td', {}, el('span', { class: 'who' }, el('span', { class: 'avatar sm', text: u.user[0].toUpperCase() }), u.user)),
+      el('td', { text: dur(u.work_s) }), el('td', { text: u.qc_s ? dur(u.qc_s) : '—' }), el('td', {}, el('b', { text: dur(u.work_s + u.qc_s) })),
+      el('td', { text: String(u.files) }), el('td', { text: dur((u.work_s + u.qc_s) / Math.max(1, Object.keys(u.days).length)) }),
+      el('td', { class: 'small muted', text: String(Object.keys(u.days).length) })))
+      : [el('tr', {}, el('td', { colspan: 7, class: 'muted small', text: 'No working time recorded in this period yet — it is counted while people work in the editor.' }))]));
+    $('tmTiles').querySelectorAll('.tbig').forEach(() => {});
+    revealCards($('pane-time'));
+  }
+  $('tmRange').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    tmDays = Number(b.dataset.d);
+    $('tmRange').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+    loadTime();
+  }));
+  $('tmUser').addEventListener('change', loadTime);
+  $('tmRefresh').addEventListener('click', loadTime);
+  $('tmReset').addEventListener('click', () => {
+    tmDays = 7;
+    $('tmUser').value = '';
+    $('tmRange').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.d === '7'));
+    loadTime();
+  });
+  $('tmCsv').addEventListener('click', () => {
+    if (!tmData) return;
+    const q = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+    const rows = [['person', 'day', 'working (min)', 'QC (min)']];
+    tmData.users.forEach((u) => Object.entries(u.days).forEach(([k, v]) => rows.push([u.user, k, Math.round(v[0] / 6) / 10, Math.round(v[1] / 6) / 10])));
+    const a = el('a', { href: URL.createObjectURL(new Blob(['﻿' + rows.map((r) => r.map(q).join(',')).join('\r\n')], { type: 'text/csv' })), download: `working_time_${tmData.since}.csv` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+  });
+
+  // ------------------------------------------------------------ little animations (nothing runs when motion is reduced)
+  const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let revealIO = null;
+  function revealCards(root) {
+    if (!root || still() || !('IntersectionObserver' in window)) return;
+    revealIO = revealIO || new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); revealIO.unobserve(e.target); } }), { rootMargin: '0px 0px -8% 0px' });
+    root.querySelectorAll('.card, .ucard').forEach((c, i) => {
+      if (c.classList.contains('in') || c.classList.contains('reveal')) return;
+      c.classList.add('reveal');
+      c.style.setProperty('--ri', String(Math.min(i, 12)));
+      revealIO.observe(c);
+    });
+    setTimeout(() => root.querySelectorAll('.reveal:not(.in)').forEach((c) => c.classList.add('in')), 1600);   // whatever happens, nothing stays hidden
+  }
+  // the filter bar gets a shadow when the page is scrolled under it
+  (() => {
+    const bar = $('filterBar');
+    if (!bar || !('IntersectionObserver' in window)) return;
+    const mark = el('div', { class: 'stickmark', 'aria-hidden': 'true' });
+    bar.before(mark);
+    new IntersectionObserver(([e]) => bar.classList.toggle('stuck', !e.isIntersecting), { rootMargin: '-60px 0px 0px 0px' }).observe(mark);
+  })();
 
   // ------------------------------------------------------------ bulk upload
   let picked = [];
@@ -649,9 +988,12 @@
         el('div', { class: 'tiny muted', text: fmt(e.at) })))));
     if (!list.length) $('logList').append(el('li', { class: 'muted', text: 'Nothing yet.' }));
   }
-  $('logUser').addEventListener('change', loadLog);
-  $('logAction').addEventListener('change', loadLog);
-  $('logSearch').addEventListener('input', loadLog);
+  const logFiltered = () => !!($('logUser').value || $('logAction').value || $('logSearch').value);
+  const logChanged = () => { $('logReset').disabled = !logFiltered(); loadLog(); };
+  $('logUser').addEventListener('change', logChanged);
+  $('logAction').addEventListener('change', logChanged);
+  $('logSearch').addEventListener('input', logChanged);
+  $('logReset').addEventListener('click', () => { $('logUser').value = ''; $('logAction').value = ''; $('logSearch').value = ''; logChanged(); });
 
   // ------------------------------------------------------------ sample files (V4.20)
   let samples = [];

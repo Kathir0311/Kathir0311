@@ -79,6 +79,7 @@ DEFAULTS = {
     "require_checklist": False,     # approval needs every checklist line ticked
     "auto_assign": False,           # a file reaching QA / Final QA goes to the checker with the fewest files
     "file_lock": True,              # V4.29: one person at a time in a file — the others can look, not change
+    "work_idle_s": 120,             # V4.30: a pause longer than this many seconds is a break — not counted as work time
 }
 SETTING_LABELS = {
     "require_pac": ("PAC report before QA", "Production uploads the PAC report of the built PDF to send a file to QA."),

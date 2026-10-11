@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='index.css') }}?v={{ asset_v }}">{% endblock %}
 {% block body %}
 <div class="wrap">
   <!-- Dez AI, the studio's own AI: a tip at a time (V4.29) -->
@@ -97,31 +98,37 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="card jobscard">
     <div class="wfbar" id="wfBar" role="tablist" aria-label="Workflow step"></div>
-    <div class="fhead">
-      <h3 style="margin:0">{{ 'Files' if is_admin else ('My files' if can_upload else 'Files to check') }}</h3>
-      <span class="small muted" id="batchInfo"></span>
-      <div class="spacer"></div>
-      <input type="search" id="jobSearch" placeholder="Search file name, title or profile…">
-      <select id="jobStage" title="Status">
-        <option value="">Every status</option><option value="active">Working now</option>
-        <option value="review">To review</option><option value="done">Built</option>
-        <option value="clean">Built with 0 errors</option><option value="error">Failed</option>
-      </select>
-      <select id="jobProfile" title="Profile"><option value="">Every profile</option></select>
-      <select id="jobSort" title="Sort">
-        <option value="new">Newest first</option><option value="old">Oldest first</option>
-        <option value="name">Name A–Z</option><option value="pages">Most pages</option>
-        <option value="errors">Most errors left</option>
-      </select>
-      <a class="btn sm hidden" id="batchSummary" href="#">Batch summary (.xlsx)</a>
+    <div class="jobbar" id="jobBar">
+      <div class="fhead">
+        <h3 style="margin:0">{{ 'Files' if is_admin else ('My files' if can_upload else 'Files to check') }}</h3>
+        <span class="small muted" id="batchInfo"></span><span class="small muted" id="jobCount" aria-live="polite"></span>
+        <div class="spacer"></div>
+        <label class="fsearch"><span aria-hidden="true">🔍</span><input type="search" id="jobSearch" placeholder="Search file name, title or profile…  ( / )" aria-label="Search files"></label>
+        <select id="jobStage" title="Status">
+          <option value="">Every status</option><option value="active">Working now</option>
+          <option value="review">To review</option><option value="done">Built</option>
+          <option value="clean">Built with 0 errors</option><option value="error">Failed</option>
+        </select>
+        <select id="jobProfile" title="Profile"><option value="">Every profile</option></select>
+        <select id="jobSort" title="Sort">
+          <option value="new">Newest first</option><option value="old">Oldest first</option>
+          <option value="name">Name A–Z</option><option value="pages">Most pages</option>
+          <option value="errors">Most errors left</option>
+        </select>
+        <button type="button" class="sm resetbtn" id="jobReset" title="Clear the search, the filters, the step and the sort" disabled>↺ Reset</button>
+        <a class="btn sm hidden" id="batchSummary" href="#">Batch summary (.xlsx)</a>
+      </div>
+      <div class="chips" id="jobChips" aria-label="Filters in use"></div>
     </div>
     <table class="list" id="jobs">
       <thead><tr><th></th><th>File</th><th>Step</th><th>Profile</th><th>Pages</th><th>Mode</th><th>Errors</th><th>Status</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
-    <p class="muted small" id="emptyJobs">Nothing yet.</p>
+    <div class="morerow hidden" id="jobMoreRow"><button type="button" class="sm" id="jobMore">Show more</button></div>
+    <div class="emptystate" id="emptyJobs"><div class="eico" aria-hidden="true">📄</div><b id="jobEmptyMsg">Nothing yet.</b>
+      <button type="button" class="sm primary hidden" id="jobEmptyReset">↺ Reset filters</button></div>
   </section>
 </div>
 <script>window.PROFILES = {{ profiles|tojson }}; window.BUILTIN = {{ builtin|tojson }};

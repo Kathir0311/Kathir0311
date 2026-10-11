@@ -95,9 +95,68 @@
     return d;
   }
 
+  // ------------------------------------------------ V4.30: change what changed
+  // The answer of a request that changed the tags says exactly what it changed (UA.post keeps it in UA_PATCHES). The
+  // editor changes those tags and their rows — not the whole file, the issues, the colours and every row again.
+  const PATCHES = (window.UA_PATCHES = window.UA_PATCHES || {});
+  function patchChain() {
+    if (!model || !rev) return null;
+    const chain = [];
+    let at = rev;
+    for (let i = 0; i < 40 && PATCHES[at]; i++) {
+      const p = PATCHES[at];
+      delete PATCHES[at];
+      if (p.reload || (p.geom && model.geom && p.geom !== model.geom)) return null;      // too much (or the pages changed)
+      chain.push(p);
+      at = p.rev;
+    }
+    return chain.length ? chain : null;
+  }
+  function applyChain(chain) {
+    const touched = new Set();
+    for (const p of chain) {
+      for (const [id, n] of Object.entries(p.nodes || {})) { model.nodes[id] = n; touched.add(id); }
+      for (const id of p.removed || []) { delete model.nodes[id]; touched.add(id); }
+      for (const [id, v] of Object.entries(p.derived || {})) {
+        const n = model.nodes[id];
+        if (n) { n.num = v[0]; n.block = v[1]; touched.add(id); }
+      }
+      Object.assign(model, p.top || {});
+      model.can_undo = p.can_undo;
+      model.can_redo = p.can_redo;
+      model.rev = p.rev;
+    }
+    rev = model.rev;
+    let k = 0;                                   // the reading order is the walk through the tree
+    const stack = [...model.roots].reverse();
+    while (stack.length) {
+      const n = model.nodes[stack.pop()];
+      if (!n) continue;
+      n.order = ++k;
+      for (let i = n.children.length - 1; i >= 0; i--) stack.push(n.children[i]);
+    }
+    return touched;
+  }
+  let issT = null, sideT = null;
+  function refreshIssuesLater() {              // the issues come a moment after the change, not before the screen shows it
+    clearTimeout(issT);
+    issT = setTimeout(() => { refreshIssues().then(() => renderTree()); }, 350);
+  }
+  function refreshSideLater() {
+    clearTimeout(sideT);
+    sideT = setTimeout(() => { refreshContrast(); refreshXref(); }, 1500);
+  }
+
   async function load(keep) {
-    model = await UA.get(api('/model'));
-    rev = model.rev || '';
+    const chain = patchChain();
+    const patched = !!chain;
+    if (patched) {
+      applyChain(chain);
+    } else {
+      for (const k of Object.keys(PATCHES)) delete PATCHES[k];
+      model = await UA.get(api('/model'));
+      rev = model.rev || '';
+    }
     hideStale();
     $('pageTotal').textContent = model.pages;
     $('undoBtn').disabled = !model.can_undo;
@@ -106,12 +165,16 @@
     for (const id of [...sel]) if (!model.nodes[id]) sel.delete(id);
     if (focus && !model.nodes[focus]) focus = null;
     if (keep && model.nodes[keep]) { sel = new Set([keep]); focus = keep; }
-    await refreshIssues();
-    await refreshContrast();
-    refreshXref();
+    if (patched) {
+      refreshIssuesLater();
+      refreshSideLater();
+    } else {
+      await Promise.all([refreshIssues(), refreshContrast()]);
+      refreshXref();
+    }
     fillRoleFilter();
     renderTree();
-    renderPage();
+    if (patched) drawBoxes(); else renderPage();
     renderInspector();
     if (window.LINKS) window.LINKS.modelLoaded(stage === 'links');
     if (window.READER) window.READER.modelLoaded();
@@ -190,6 +253,9 @@
     const counts = {};
     Object.values(model.nodes).forEach((n) => { const r = roleOf(n); counts[r] = (counts[r] || 0) + 1; });
     const keep = sel.value;
+    const sig = Object.keys(counts).sort().map((r) => r + counts[r]).join('|');
+    if (sig === fillRoleFilter.sig) return;                      // the same tag types: the list is as it was
+    fillRoleFilter.sig = sig;
     sel.replaceChildren(el('option', { value: '', text: 'Tag type: any' }),
       ...Object.keys(counts).sort().map((r) => el('option', { value: r, text: `${r} (${counts[r]})` })));
     sel.value = [...sel.options].some((o) => o.value === keep) ? keep : '';
@@ -199,6 +265,44 @@
       .filter((id) => model.nodes[id]);
   }
 
+  // V4.30: a row is made again only when what it shows changed (its signature); the others stay in the page as they are,
+  // and a row is moved only when its place changed. A change of one tag touches one row — also in a file of 10 000 tags.
+  function rowView(n, depth, hasKids, isCol) {
+    let lab = labelOf(n);
+    if (lab && n.blank_line) lab = `${lab}  (reads “${blankText(n)}”)`;
+    const emptyCell = (n.role === 'TD' || n.role === 'TH') && !lab && !hasKids;
+    const text = lab || (emptyCell ? `(empty — reads “${n.actual_text || window.BLANK_TEXT || 'Blank cell'}”)` :
+      n.blank_line ? `(${(n.rects || []).length > 1 ? `${n.rects.length} write-in lines` : 'write-in line'} — reads “${blankText(n)}”)` :
+      hasKids ? '' : (n.role === 'Figure' ? 'no alt text' : ''));
+    const iss = issuesByNode[n.id];
+    const v = {
+      depth, hasKids, isCol, text, dim: !lab, num: n.num || '', role: roleName(n), rcls: roleClass(n), lang: n.lang || '',
+      low: !n.artifact && n.confidence < 0.55 && n.source !== 'user', src: n.source === 'ai' ? 'ai' : n.source === 'user' ? 'user' : '',
+      issN: iss ? iss.length : 0, issErr: iss ? iss.some((i) => i.severity === 'error') : false, issCode: iss ? iss[0].code : '',
+    };
+    v.sig = [depth, hasKids ? 1 : 0, isCol ? 1 : 0, v.low ? 1 : 0, v.num, v.role, v.rcls, v.text, v.dim ? 1 : 0, v.lang, v.src,
+      v.issN, v.issErr ? 1 : 0, v.issCode].join('\u0001');
+    return v;
+  }
+  function buildRow(id, v) {
+    const row = el('div', {
+      class: 'node' + (v.low ? ' low' : ''),
+      draggable: 'true', role: 'treeitem', 'aria-level': v.depth + 1,
+      'aria-expanded': v.hasKids ? String(!v.isCol) : false,
+    });
+    row.dataset.id = id;
+    row.style.paddingLeft = (4 + v.depth * 14) + 'px';
+    row.append(el('span', { class: 'tw', text: v.hasKids ? (v.isCol ? '▸' : '▾') : '' }));
+    row.append(el('span', { class: 'ord', text: v.num, title: v.num ? 'Reading position — click again (or double-click) to change' : '' }));
+    row.append(el('span', { class: 'role ' + v.rcls, text: v.role }));
+    row.append(el('span', { class: 'ntext' + (v.dim ? ' dim' : ''), text: v.text }));
+    if (v.lang) row.append(el('span', { class: 'badge ai', text: v.lang }));
+    if (v.issN) row.append(el('span', { class: 'badge ' + (v.issErr ? 'err' : ''), text: v.issN > 1 ? `${v.issN} issues` : (v.issCode === 'alt' ? 'alt?' : v.issCode) }));
+    if (v.src === 'ai') row.append(el('span', { class: 'badge ai', text: 'AI' }));
+    else if (v.src === 'user') row.append(el('span', { class: 'badge user', text: '✓' }));
+    row._sig = v.sig;
+    return row;
+  }
   function renderTree() {
     const f = $('filter').value;
     const rf = ($('roleFilter') || {}).value || '';
@@ -225,9 +329,10 @@
         }
       }
     }
-    const frag = document.createDocumentFragment();
+    const prev = rowOf;
+    const next = {};
+    const wanted = [];
     flat = [];
-    rowOf = {};
     const walk = (id, depth) => {
       const n = model.nodes[id];
       if (!n) return;
@@ -236,47 +341,38 @@
       flat.push(id);
       const hasKids = n.children.length > 0;
       const isCol = collapsed.has(id) && !include;
-      const row = el('div', {
-        class: 'node' + (sel.has(id) ? ' sel' : '') + (id === focus ? ' focus' : '') +
-          (!n.artifact && n.confidence < 0.55 && n.source !== 'user' ? ' low' : ''),
-        draggable: 'true', role: 'treeitem', 'aria-level': depth + 1,
-        'aria-expanded': hasKids ? String(!isCol) : false,
-      });
-      row.dataset.id = id;
-      row.style.paddingLeft = (4 + depth * 14) + 'px';
-      row.append(el('span', { class: 'tw', text: hasKids ? (isCol ? '▸' : '▾') : '' }));
-      row.append(el('span', { class: 'ord', text: n.num || '', title: n.num ? 'Reading position — click again (or double-click) to change' : '' }));
-      row.append(el('span', { class: 'role ' + roleClass(n), text: roleName(n) }));
-      let lab = labelOf(n);
-      if (lab && n.blank_line) lab = `${lab}  (reads “${blankText(n)}”)`;
-      const emptyCell = (n.role === 'TD' || n.role === 'TH') && !lab && !hasKids;
-      const txt = el('span', { class: 'ntext' + (lab ? '' : ' dim'),
-        text: lab || (emptyCell ? `(empty — reads “${n.actual_text || window.BLANK_TEXT || 'Blank cell'}”)` :
-          n.blank_line ? `(${(n.rects || []).length > 1 ? `${n.rects.length} write-in lines` : 'write-in line'} — reads “${blankText(n)}”)` :
-          hasKids ? '' : (n.role === 'Figure' ? 'no alt text' : '')) });
-      row.append(txt);
-      if (n.lang) row.append(el('span', { class: 'badge ai', text: n.lang }));
-      const iss = issuesByNode[id];
-      if (iss) {
-        const worst = iss.some((i) => i.severity === 'error') ? 'err' : '';
-        row.append(el('span', { class: 'badge ' + worst, text: iss.length > 1 ? `${iss.length} issues` : (iss[0].code === 'alt' ? 'alt?' : iss[0].code) }));
-      }
-      if (n.source === 'ai') row.append(el('span', { class: 'badge ai', text: 'AI' }));
-      else if (n.source === 'user') row.append(el('span', { class: 'badge user', text: '✓' }));
-      rowOf[id] = row;
-      frag.append(row);
+      const v = rowView(n, depth, hasKids, isCol);
+      let row = prev[id];
+      if (!row || row._sig !== v.sig) row = buildRow(id, v);
+      row.classList.toggle('sel', sel.has(id));
+      row.classList.toggle('focus', id === focus);
+      next[id] = row;
+      wanted.push(row);
       if (!isCol) n.children.forEach((c) => walk(c, depth + 1));
     };
     model.roots.forEach((r) => walk(r, 0));
-    treeEl.replaceChildren(frag);
+    rowOf = next;
+    for (const id in prev) if (next[id] !== prev[id]) prev[id].remove();      // rows that are gone or were made again
+    let ref = treeEl.firstChild;
+    for (const row of wanted) {
+      if (row === ref) ref = ref.nextSibling;
+      else treeEl.insertBefore(row, ref);
+    }
+    while (ref) { const nx = ref.nextSibling; ref.remove(); ref = nx; }        // what is left over (the "nothing matches" line …)
     if (!flat.length) treeEl.append(el('p', { class: 'muted small', style: 'padding:10px', text: 'Nothing matches.' }));
+    selMarked = new Set(sel);
+    focusMarked = focus;
   }
 
+  // only the rows whose mark changed are touched (was: every row of the file at every click)
+  let selMarked = new Set(), focusMarked = null;
   function updateSelectionClasses() {
-    for (const [id, row] of Object.entries(rowOf)) {
-      row.classList.toggle('sel', sel.has(id));
-      row.classList.toggle('focus', id === focus);
-    }
+    for (const id of selMarked) if (!sel.has(id) && rowOf[id]) rowOf[id].classList.remove('sel');
+    for (const id of sel) if (rowOf[id]) rowOf[id].classList.add('sel');
+    if (focusMarked && focusMarked !== focus && rowOf[focusMarked]) rowOf[focusMarked].classList.remove('focus');
+    if (focus && rowOf[focus]) rowOf[focus].classList.add('focus');
+    selMarked = new Set(sel);
+    focusMarked = focus;
   }
 
   treeEl.addEventListener('dblclick', (e) => {
@@ -1033,11 +1129,15 @@
     const before = model && model.nodes[id] ? (model.nodes[id].artifact ? 'Artifact' : model.nodes[id].role) : '';
     const r = await post(`/node/${id}`, fields);
     if (!r.error && reload !== false) await load(id);
-    if (!r.error && fields && fields.role && before && fields.role !== before) offerSimilar(id, before, fields.role);
+    if (!r.error && fields && fields.role && before && fields.role !== before) offerSimilarLater(id, before, fields.role);
   }
 
   // ------------------------------------------- V4.26: one fix, the brain offers the rest
-  let simCard = null;
+  let simCard = null, simT = null;
+  function offerSimilarLater(id, from, to) {          // V4.30: after a pause in the changes, not after each one
+    clearTimeout(simT);
+    simT = setTimeout(() => offerSimilar(id, from, to), 450);
+  }
   async function offerSimilar(id, from, to) {
     if (simCard) { simCard.remove(); simCard = null; }
     let r;
@@ -1103,6 +1203,47 @@
   let rev = '', staleBar = null, hbBusy = false, lastTouch = Date.now();
   ['keydown', 'pointerdown'].forEach((ev) => document.addEventListener(ev, () => { lastTouch = Date.now(); }, true));
   document.addEventListener('pointermove', (e) => { if (e.buttons) lastTouch = Date.now(); }, true);   // a drag is not idle
+  // ------------------------------------------- V4.30: working time — only the time something is done, never a break
+  // Every key, click, drag, wheel turn or movement of the mouse is a moment of work. Between two such moments a pause
+  // shorter than the idle limit (Admin → Workflow, 2 minutes) is thinking and counts; a longer pause is a break and
+  // counts for nothing. The seconds go to the server with the heartbeat, which keeps them per file and per person.
+  const WORKCFG = window.WORK || { idle_limit: 120 };
+  let lastInput = 0, workMs = 0, workShown = ((WORKCFG.work_s || 0) + (WORKCFG.qc_s || 0)) * 1000, workKind = WORKCFG.kind || 'work',
+    workCounts = true, moveAt = 0;
+  function noteInput() {
+    const now = Date.now();
+    if (document.hidden) { lastInput = 0; return; }
+    if (lastInput) {
+      const gap = now - lastInput;
+      const add = gap < (WORKCFG.idle_limit || 120) * 1000 ? gap : 1500;
+      workMs += add;
+      workShown += add;
+    }
+    lastInput = now;
+  }
+  ['keydown', 'pointerdown', 'wheel', 'touchstart'].forEach((ev) => document.addEventListener(ev, noteInput, { capture: true, passive: true }));
+  document.addEventListener('pointermove', () => { const t = Date.now(); if (t - moveAt > 1000) { moveAt = t; noteInput(); } }, { capture: true, passive: true });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) lastInput = 0; });
+  const fmtWork = (ms) => {
+    const sec = Math.round(ms / 1000);
+    if (sec < 60) return sec + ' s';
+    const m = Math.floor(sec / 60);
+    return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0') + ' min';
+  };
+  function renderWorkChip() {
+    const c = $('workChip');
+    if (!c) return;
+    c.classList.toggle('hidden', !workCounts);
+    if (!workCounts) return;
+    const paused = !lastInput || Date.now() - lastInput > (WORKCFG.idle_limit || 120) * 1000;
+    const text = (paused ? '⏸ ' : '⏱ ') + fmtWork(workShown);
+    if (c.textContent !== text) c.textContent = text;
+    c.classList.toggle('paused', paused);
+    c.title = (workKind === 'qc' ? 'QC' : 'Working') + ' time on this file: ' + fmtWork(workShown) + '. Only the time you are active counts — ' +
+      'a pause longer than ' + Math.round((WORKCFG.idle_limit || 120) / 60 * 10) / 10 + ' min is a break and is left out.' + (paused ? ' (paused now)' : '');
+  }
+  setInterval(renderWorkChip, 1000);
+  renderWorkChip();
   function hideStale() { if (staleBar) { staleBar.remove(); staleBar = null; } }
   function showHere(list) {
     const chip = $('hereChip');
@@ -1126,10 +1267,19 @@
     hbBusy = true;
     try {
       const active = Date.now() - lastTouch < 60000;
+      const sent = workMs;                                  // the seconds worked since the last beat
       const r = await fetch(api('/presence') + '?rev=' + encodeURIComponent(rev) + '&page=' + page +
-        (lock && lock.mine ? '&hold=1' : '') + (active ? '&active=1' : ''));
+        (lock && lock.mine ? '&hold=1' : '') + (active ? '&active=1' : '') + (sent >= 500 ? '&w=' + (sent / 1000).toFixed(1) : ''));
       if (!r.ok) return;
+      workMs = Math.max(0, workMs - sent);                  // only now: a beat that failed leaves its seconds for the next one
       const d = await r.json();
+      if (d.time) {
+        workCounts = !!d.time.counting;
+        workKind = d.time.kind || workKind;
+        if (d.time.idle_limit) WORKCFG.idle_limit = d.time.idle_limit;
+        workShown = d.time.mine_s * 1000 + workMs;           // what the server holds, plus what is still to be sent
+        renderWorkChip();
+      }
       if (d.lock !== undefined) setLock(d.lock);
       showHere(d.here || []);
       if (!d.changed) { hideStale(); return; }
@@ -1272,6 +1422,14 @@
   }
 
   const SAY = {};
+  // V4.30: passing over tags with the arrow keys asked the server about every one of them (each answer holds the
+  // PDF for everybody) — now it is asked when the person stays on a tag, and not at all for one asked before
+  let sayT = null;
+  function sampleSayLater(n, box) {
+    clearTimeout(sayT);
+    if (SAY[n.id + '|' + (n.text || '').length]) { sampleSay(n, box); return; }
+    sayT = setTimeout(() => { if (focus === n.id && box.isConnected) sampleSay(n, box); }, 320);
+  }
   async function sampleSay(n, box) {
     const key = n.id + '|' + (n.text || '').length;
     let r = SAY[key];
@@ -1309,7 +1467,7 @@
     if (['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'Caption', 'Note', 'BlockQuote'].includes(n.role) && n.text) {
       const say = el('div', { class: 'sampsay hidden' });
       box.append(say);
-      sampleSay(n, say);
+      sampleSayLater(n, say);
     }
 
     if (n.artifact) {

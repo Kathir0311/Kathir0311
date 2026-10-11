@@ -15,6 +15,7 @@
   <div class="spacer"></div>
   <button type="button" class="lockchip hidden" id="lockChip"></button>
   <span class="herechip hidden" id="hereChip" tabindex="0"></span>
+  <span class="workchip hidden" id="workChip" role="timer" aria-live="off"></span>
   <span class="workchip hidden" id="workChip" tabindex="0"></span>
   <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
   <button id="redoBtn" title="Redo (Ctrl+Shift+Z)" disabled>↷ Redo</button>
@@ -583,7 +584,7 @@
   window.META = {{ {'stage': meta.stage, 'built': meta.built, 'mode': meta.mode, 'link_direction': opts.link_direction, 'profile': meta.get('profile') or ''}|tojson }};
 </script>
 {% endif %}
-<script>window.JOB = window.JOB || {{ meta.id|tojson }}; window.BUSY = {{ busy|tojson }}; window.READONLY = {{ readonly|tojson }}; window.LOCK = {{ lock|tojson }};</script>
+<script>window.JOB = window.JOB || {{ meta.id|tojson }}; window.BUSY = {{ busy|tojson }}; window.READONLY = {{ readonly|tojson }}; window.LOCK = {{ lock|tojson }}; window.WORK = {{ work|tojson }};</script>
 {% endblock %}
 
 {% block scripts %}<script src="{{ url_for('static', filename='editor.js') }}?v={{ asset_v }}"></script>

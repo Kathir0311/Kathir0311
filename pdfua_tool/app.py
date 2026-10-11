@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import gzip
 import io
 import json
 import os
@@ -47,6 +48,10 @@ from core.textflags import printed_text
 from core.jobrunner import JobFailed, JobStopped, run_task
 from core.editlock import EditLocks, reason as lock_reason
 from core.fairqueue import FairQueue
+from core.jobindex import JobIndex
+from core.modelsync import Shadow
+from core import rights as RIGHTS
+from core.worktime import WorkTimes, kind_of as time_kind, fmt as time_fmt
 from core.locks import FairRLock, replace_file
 from core.preflight import tesseract_info
 from core.report import write_batch_summary
@@ -60,6 +65,7 @@ CONFIG_PATH = os.environ.get("PDFUA_CONFIG", os.path.join(BASE, "config.json"))
 from core import netguard as NETGUARD  # noqa: E402
 NETGUARD.install(CONFIG_PATH, process="web app")
 os.makedirs(JOBS, exist_ok=True)
+JOBINDEX = JobIndex(JOBS)            # V4.30: every file's meta, parsed once (core/jobindex.py)
 HISTORY_LIMIT = 60
 
 app = Flask(__name__)
@@ -98,7 +104,16 @@ def can_see(meta: dict, user: dict | None = None) -> bool:
     """An admin sees every file; production the files they uploaded or were
     given; QA / Final QA the files in their queue and the ones they checked
     (core/workflow.py)."""
-    return WF.can_see(meta, user or current_user())
+    u = user or current_user()
+    return WF.can_see(meta, u) or RIGHTS.allowed(u, "see_all")        # V4.30: a person an admin allowed to look at every file
+
+
+def work_idle_limit() -> int:
+    """Admin → Workflow: a pause longer than this many seconds is a break (not counted as work time)."""
+    try:
+        return max(30, min(900, int(wf_cfg().get("work_idle_s") or 120)))
+    except Exception:
+        return 120
 
 
 def wf_cfg() -> dict:
@@ -138,7 +153,8 @@ def lock_view(jid: str) -> dict:
     mine = bool(h and _same_user(h["user"], me))
     return {"enabled": lock_enabled(), "holder": (h or {}).get("user", ""), "since": (h or {}).get("since", ""),
             "idle_s": (h or {}).get("idle_s", 0), "mine": mine, "free": h is None,
-            "reason": "" if (h is None or mine) else lock_reason(h), "can_take_over": is_admin(),
+            "reason": "" if (h is None or mine) else lock_reason(h),
+            "can_take_over": is_admin() or RIGHTS.allowed(current_user(), "take_over"),
             "idle_limit_s": int(EDITLOCK.idle)}
 
 
@@ -163,6 +179,23 @@ def _lock_gate(jid: str):
 # change the profile, delete (V4.23)
 ANALYSE_ENDPOINTS = {"upload", "reanalyze", "api_retag", "api_job_profile", "delete_job", "api_job_samples_apply",
                      "api_answer", "api_job_brain_think"}
+# V4.30: the right a request needs (core/rights.py) — the role's default unless an admin set it for the person
+ENDPOINT_RIGHT = {"upload": "upload", "reanalyze": "reanalyse", "api_retag": "reanalyse", "api_job_profile": "reanalyse",
+                  "api_job_samples_apply": "reanalyse", "api_answer": "reanalyse", "api_job_brain_think": "reanalyse",
+                  "delete_job": "delete_files", "api_build": "build", "download": "download", "download_pac": "download",
+                  "support_page": "download",
+                  **{ep: "use_ai" for ep in ("api_ai_alt", "api_ai_alt_all", "api_ai_fields", "api_ai_headings", "api_ai_links",
+                                             "api_ai_math", "api_ai_roles", "api_ai_tables", "api_order_ai",
+                                             "api_table_summary_ai", "api_actual_text_suggest")}}
+
+
+def _no_right(user: dict | None, key: str) -> str:
+    r = RIGHTS.BY_KEY[key]
+    if key in (RIGHTS.explicit(user) or {}):
+        return f"You have not been given the right to: {r['label'].lower()}. Ask an admin."
+    if key in ("upload", "reanalyse"):
+        return "QA and Final QA do not upload or analyse files — they correct and check them"
+    return f"Your role does not include: {r['label'].lower()}. An admin can give you the right."
 # the steps a file's reader may take without being able to edit it
 WF_OPEN_ENDPOINTS = {"api_job_work", "api_job_wf", "api_job_wf_submit", "api_job_wf_comment", "api_lock"}
 # V4.29: requests that are not a change of the file (or manage the lock itself): the lock does not hold them back
@@ -216,9 +249,11 @@ def _auth():
         if request.path.startswith("/api/"):
             return jsonify({"error": "only an admin can do that"}), 403
         abort(403)
-    if request.endpoint in ANALYSE_ENDPOINTS and request.method == "POST" and not WF.can_analyse(g.user):
+    need = ENDPOINT_RIGHT.get(request.endpoint or "")
+    if need and (request.method == "POST" or request.method == "GET" and need == "download") \
+            and not RIGHTS.allowed(g.user, need):
         if request.path.startswith("/api/") or request.headers.get("X-Requested-With") == "fetch":
-            return jsonify({"error": "QA and Final QA do not upload or analyse files — they correct and check them"}), 403
+            return jsonify({"error": _no_right(g.user, need), "right": need}), 403
         abort(403)
     jid = (request.view_args or {}).get("jid")
     if jid and g.user.get("role") != "admin":
@@ -274,7 +309,7 @@ def _user_in_templates():
     u = current_user()
     r = WF.role_of(u) if u else ""
     return {"me": u, "is_admin": is_admin(), "my_role": r, "my_role_label": WF.ROLE_LABELS.get(r, r),
-            "can_upload": bool(u) and WF.can_analyse(u)}
+            "can_upload": bool(u) and RIGHTS.allowed(u, "upload"), "my_rights": RIGHTS.effective(u) if u else {}}
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -470,7 +505,7 @@ _NO_LOCK = ("/status", "/stop")
 PURE_EDITS = {"api_node", "api_move", "api_levels", "api_bulk", "api_order", "api_undo", "api_actual_text",
               "api_headers_fix", "api_order_fix"}
 PURE_READS = {"api_job_summary", "api_findings", "api_job_info", "api_lint", "api_job_brain",
-              "api_actualtext_tags", "api_zones_similar", "api_job_wf"}
+              "api_actualtext_tags", "api_zones_similar", "api_job_wf", "api_xref"}
 _req_locks: dict[str, FairRLock] = {}
 _req_guard = threading.Lock()
 LOCK_AUDIT = os.environ.get("PDFUA_LOCK_AUDIT", "") == "1"      # tests: a request that opens a PDF unlocked fails
@@ -583,6 +618,8 @@ def _lock_plan() -> tuple[bool, bool, str]:
             if f and os.path.exists(f):
                 return False, False, jid               # drawn before: a file read
             return True, False, jid
+        if ep == "api_contrast" and request.method == "GET":
+            return (not _geometry_cached(jid)), True, jid       # V4.30: the kept page geometry; the PDF only when it is not kept
         if ep == "api_model":
             m = get_model(jid)
             cold = not m.info.get("cell_zones_checked") and any(
@@ -713,6 +750,7 @@ def write_meta(jid: str, meta: dict) -> None:
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=1, ensure_ascii=False, default=str)
     replace_file(tmp, p)
+    JOBINDEX.touch(secure_filename(jid))
 
 
 def update_meta(jid: str, **kw) -> dict:
@@ -721,6 +759,25 @@ def update_meta(jid: str, **kw) -> dict:
         m.update(kw)
         write_meta(jid, m)
         return m
+
+
+# V4.30: how long people really work on a file — only the time they are active, never a break (core/worktime.py)
+def _times_load(jid: str):
+    m = JOBINDEX.get(secure_filename(jid))
+    t = (m or {}).get("time")
+    return json.loads(json.dumps(t)) if t else None
+
+
+def _times_save(jid: str, totals: dict) -> None:
+    update_meta(jid, time=totals)
+
+
+def _times_file(jid: str) -> str:
+    d = os.path.join(JOBS, secure_filename(jid))
+    return os.path.join(d, "worktime.json") if os.path.isdir(d) else ""
+
+
+TIMES = WorkTimes(_times_load, _times_save, _times_file)
 
 
 def job_opts(jid: str) -> Options:
@@ -752,7 +809,13 @@ def _push(jid: str, kind: str, src: str) -> None:
     d = _hist(jid, kind)
     items = sorted(os.listdir(d))
     n = int(items[-1].split(".")[0]) + 1 if items else 1
-    shutil.copyfile(src, os.path.join(d, f"{n:06d}.json"))
+    dst = os.path.join(d, f"{n:06d}.json")
+    try:
+        if os.path.exists(dst):
+            os.remove(dst)
+        os.link(src, dst)             # V4.30: no copy of the whole file — model.json is replaced, never written in place
+    except OSError:
+        shutil.copyfile(src, dst)
     for old in items[:-HISTORY_LIMIT]:
         os.remove(os.path.join(d, old))
 
@@ -768,12 +831,39 @@ _model_cache: "collections.OrderedDict[str, tuple[float, DocModel]]" = collectio
 _mc_lock = threading.Lock()
 
 
+# V4.30: next to the tags of a file in memory, a copy of how they were when last saved (core/modelsync.py) —
+# the difference after an edit says which tags to write again and which rows the editor must change.
+_SHADOWS: "collections.OrderedDict[str, Shadow]" = collections.OrderedDict()
+SHADOW_EVERY = 40            # every 40th save starts the copy afresh (a safety net, not a need)
+
+
 def _cache_model(jid: str, mt: float, model: DocModel) -> None:
     with _mc_lock:
         _model_cache[jid] = (mt, model)
         _model_cache.move_to_end(jid)
         while len(_model_cache) > MODEL_CACHE_MAX:
-            _model_cache.popitem(last=False)
+            gone, _ = _model_cache.popitem(last=False)
+            _SHADOWS.pop(gone, None)
+        while len(_SHADOWS) > MODEL_CACHE_MAX:
+            _SHADOWS.popitem(last=False)
+
+
+def _shadow_of(jid: str, model: DocModel) -> Shadow:
+    """The copy that belongs to this very model object (a model loaded again gets a new copy)."""
+    with _mc_lock:
+        sh = _SHADOWS.get(jid)
+        if sh is not None and sh.owner is model and sh.saves < SHADOW_EVERY:
+            _SHADOWS.move_to_end(jid)
+            return sh
+    sh = Shadow(model, model)
+    with _mc_lock:
+        _SHADOWS[jid] = sh
+    return sh
+
+
+# V4.30: the version of a file's tags. The file's date alone can be the same for two saves in the same instant,
+# so every change made through mutate() also counts up.
+_REV: dict[str, int] = {}
 
 
 def get_model(jid: str) -> DocModel:
@@ -820,11 +910,18 @@ def _guard_busy(jid: str) -> None:
 
 @contextmanager
 def mutate(jid: str):
-    """Snapshot for undo, yield the (cached) model, save."""
+    """Snapshot for undo, yield the (cached) model, save.
+
+    V4.30: only what the edit changed is written again, and the editor is told exactly that (g.patch, added to
+    the answer by _attach_patch) — so it changes those rows instead of asking for the whole file again."""
     _guard_busy(jid)
     with job_lock(jid):
         path = os.path.join(job_dir(jid), "model.json")
         model = get_model(jid)
+        sh = _shadow_of(jid, model)
+        if sh.nums is None and has_request_context():
+            sh.nums, sh.order = _numbering(model)      # what the editor of this person holds (it loaded this state)
+        base = model_rev(jid)
         _push(jid, "undo", path)
         _clear(jid, "redo")
         roles_before = {nid: n.role for nid, n in model.nodes.items()}
@@ -836,17 +933,228 @@ def mutate(jid: str):
             yield model
         except Exception:
             _model_cache.pop(jid, None)       # discard half-applied edits
+            _SHADOWS.pop(jid, None)
             raise
         _house_after_edit(jid, model, roles_before)
-        model.check_integrity()
-        save_model(job_dir(jid), model)
+        changed, gone, tops = sh.diff(model)
+        renumber = bool(gone) or "root_children" in tops or any(_renumbers(sh.nodes.get(nid), model.nodes[nid])
+                                                              for nid in changed)
+        if gone or "root_children" in tops or any(
+                (o := sh.nodes.get(nid)) is None or o["parent"] != model.nodes[nid].parent
+                or o["children"] != model.nodes[nid].children for nid in changed):
+            model.check_integrity()                # only a change of the structure can leave a loose end
+            changed, gone, tops = sh.diff(model)
+        sh.commit(model, changed, gone, tops)
+        _write_model(jid, model, sh)
+        _REV[secure_filename(jid)] = _REV.get(secure_filename(jid), 0) + 1
         _cache_model(jid, os.path.getmtime(path), model)
-        update_meta(jid, edited=datetime.now().isoformat(timespec="seconds"), dirty=True,
-                    edited_by=current_user_name() or "")
+        rev = model_rev(jid)
+        _note_patch(jid, model, sh, base, rev, changed, gone, tops, renumber)
+        sh.saves += 1
+        _touch_meta_edited(jid)
     try:                                  # V4.28: every change of the tags teaches the tool, a few seconds later
         learn_live(jid)
     except Exception:
         pass
+
+
+def _write_model(jid: str, model: DocModel, sh: Shadow) -> None:
+    """model.json from the kept pieces (core/modelsync.py): the text of every tag that did not change is reused."""
+    d = job_dir(jid)
+    tmp = os.path.join(d, "model.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(sh.dump(model))
+    replace_file(tmp, os.path.join(d, "model.json"))
+
+
+_EDIT_STAMP: dict[str, float] = {}
+
+
+def _touch_meta_edited(jid: str) -> None:
+    """The file's "last edited by" — written to meta.json at most once in 2 seconds per file while it is marked
+    changed already (a person editing quickly rewrote it a dozen times a second for nothing: the page shows
+    minutes). The first change after a pause, and the first one after a build, are written at once."""
+    now = time.time()
+    m = JOBINDEX.get(secure_filename(jid))
+    if m is not None and m.get("dirty") and now - _EDIT_STAMP.get(jid, 0.0) < 2.0:
+        return
+    _EDIT_STAMP[jid] = now
+    update_meta(jid, edited=datetime.now().isoformat(timespec="seconds"), dirty=True,
+                edited_by=current_user_name() or "")
+
+
+# ---------------------------------------------------------------- what the editor is told after an edit (V4.30)
+PATCH_MAX = 400          # more changed tags than this (or an eighth of the file): the editor asks for the whole file
+
+
+def _disp(mat, r) -> list:
+    a, b, c, d_, e, f = mat
+    xs, ys = [], []
+    for x, y in ((r[0], r[1]), (r[2], r[1]), (r[0], r[3]), (r[2], r[3])):
+        xs.append(a * x + c * y + e)
+        ys.append(b * x + d_ * y + f)
+    return [round(min(xs), 2), round(min(ys), 2), round(max(xs), 2), round(max(ys), 2)]
+
+
+def _node_view(n, mats, order: dict, nums: dict) -> dict:
+    """One tag as the editor sees it (what GET /model lists for it)."""
+    d = node_dict(n)
+    for k in ("mcids", "style", "parts", "bbox"):
+        d.pop(k, None)
+    d["order"] = order.get(n.id, 0)
+    d["num"], d["block"] = nums.get(n.id, ("", None))
+    rects = []
+    if n.bbox is not None and 0 <= n.page < len(mats):
+        rects.append([n.page, *_disp(mats[n.page], n.bbox), -1])
+    for k, pr in enumerate(n.parts):
+        pp = int(pr[0])
+        if 0 <= pp < len(mats):
+            rects.append([pp, *_disp(mats[pp], pr[1:]), k])
+    d["rects"] = rects
+    d["src_keys"] = len(n.src_keys)
+    d["blank_line"] = bool((n.style or {}).get("blank_line"))
+    return d
+
+
+def _geom_stamp(jid: str) -> str:
+    k = _geom.get(secure_filename(jid))
+    return "" if not k or k[0] is None else f"{k[0][0]}.{k[0][1]}"
+
+
+_TOP_TO_EDITOR = {"root_children": "roots", "title": "title", "lang": "lang", "mode": "mode",
+                  "warnings": "warnings", "info": "info"}
+
+
+def _numbering(model: DocModel) -> tuple[dict, dict]:
+    """(reading numbers, reading order) of every tag — one walk through the tree."""
+    ordered = model.ordered_nodes()
+    return edit.reading_numbers(model, ordered), {n.id: k for k, n in enumerate(ordered, start=1)}
+
+
+def _compute_patch(jid: str, model: DocModel, prev: dict, nums: dict, order: dict, base: str, rev: str,
+                   changed: list, gone: list, tops: list, can_undo: bool, can_redo: bool) -> dict | None:
+    """What the editor, which holds the file as of `base`, has to change to hold it as of `rev`; None: too much
+    (or not known) — it asks for the whole file then."""
+    key = secure_filename(jid)
+    if not (_geometry_cached(key) or MUPDF_LOCK._is_owned()):
+        return None
+    mats, sizes = page_geometry(key)
+    ids = set(changed)
+    derived = {nid: list(nb) for nid, nb in nums.items() if nid not in ids and prev.get(nid) != nb}
+    if len(changed) + len(gone) > max(PATCH_MAX, len(model.nodes) // 8):
+        return None                      # (a long run of renumbered tags is small: an id and two short values each)
+    return {"base": base, "rev": rev, "geom": _geom_stamp(key),
+            "nodes": {nid: _node_view(model.nodes[nid], mats, order, nums) for nid in changed},
+            "removed": gone, "derived": derived,
+            "top": {_TOP_TO_EDITOR[k]: getattr(model, k) for k in tops if k in _TOP_TO_EDITOR},
+            "can_undo": can_undo, "can_redo": can_redo}
+
+
+def _renumbers(old: dict | None, n) -> bool:
+    """Can this tag's change alter the reading numbers? They are made of the tree, which tags are artifacts, and
+    which containers are 'flow' containers (a paragraph becoming a heading changes none of them)."""
+    if old is None or old["artifact"] != n.artifact or old["parent"] != n.parent or old["children"] != n.children:
+        return True
+    return old["role"] != n.role and (old["role"] in edit.FLOW_ROLES or n.role in edit.FLOW_ROLES)
+
+
+def _note_patch(jid: str, model: DocModel, sh: Shadow, base: str, rev: str, changed: list, gone: list,
+                tops: list, renumber: bool = True) -> None:
+    """Work out what the editor has to change for this edit (or that it has to ask for everything) and keep it
+    for _attach_patch. The reading numbers are the editor's baseline: the ones it was told last."""
+    if not has_request_context():
+        sh.nums = None                              # nobody was told: the next edit starts again
+        return
+    patch: dict | None = None
+    try:
+        prev = sh.nums
+        if renumber or prev is None or sh.order is None:
+            nums, order = _numbering(model)
+            sh.nums, sh.order = nums, order
+        else:
+            nums, order = prev, sh.order                # nothing the numbers are made of changed
+        if prev is not None:
+            patch = _compute_patch(jid, model, prev, nums, order, base, rev, changed, gone, tops, True, False)
+    except Exception as exc:                       # never in the way of the edit: the editor asks for everything
+        app.logger.warning("patch: %s", exc)
+        patch = None
+    _add_patch(patch, base, rev)
+
+
+def _add_patch(p: dict | None, base: str, rev: str) -> None:
+    """One request can change a file more than once: the editor gets one patch, from the first base to the last."""
+    cur = g.get("patch")
+    if cur is None:
+        g.patch = p if p is not None else {"base": base, "rev": rev, "reload": True}
+        return
+    if p is None or cur.get("reload") or p.get("reload"):
+        g.patch = {"base": cur["base"], "rev": rev, "reload": True}
+        return
+    cur["nodes"].update(p["nodes"])
+    for nid in p["removed"]:
+        cur["nodes"].pop(nid, None)
+    cur["removed"] = sorted((set(cur["removed"]) | set(p["removed"])) - set(p["nodes"]))
+    for nid in p["nodes"]:
+        cur["derived"].pop(nid, None)
+    cur["derived"].update(p["derived"])
+    cur["top"].update(p["top"])
+    for k in ("rev", "geom", "can_undo", "can_redo"):
+        cur[k] = p[k]
+
+
+_COMPRESSIBLE = {"application/json", "text/html", "text/css", "application/javascript", "text/javascript",
+                 "image/svg+xml", "text/csv", "text/plain"}
+_GZ_STATIC: dict[str, tuple[int, bytes]] = {}
+
+
+@app.after_request
+def _squeeze(resp):
+    """V4.30: pages, answers and scripts travel compressed to a browser that accepts it (a 3 MB list of tags is ~300 KB on
+    the wire — what matters to people on Wi-Fi, a VPN or a far-away office), and the scripts / styles, whose address
+    carries the version (?v=), are kept by the browser for a year instead of being asked about at every page."""
+    try:
+        if resp.status_code != 200 or resp.headers.get("Content-Encoding"):
+            return resp
+        if request.endpoint == "static":
+            if "v" in request.args:
+                resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            if resp.mimetype in _COMPRESSIBLE and _gzip_ok():
+                path = os.path.join(app.static_folder, request.view_args.get("filename", ""))
+                mt = os.stat(path).st_mtime_ns
+                hit = _GZ_STATIC.get(path)
+                if hit is None or hit[0] != mt:
+                    with open(path, "rb") as fh:
+                        hit = _GZ_STATIC[path] = (mt, gzip.compress(fh.read(), 6))
+                resp.direct_passthrough = False
+                resp.set_data(hit[1])
+                resp.headers["Content-Encoding"] = "gzip"
+                resp.headers.add("Vary", "Accept-Encoding")
+            return resp
+        if (not resp.direct_passthrough and not resp.is_streamed and resp.mimetype in _COMPRESSIBLE and _gzip_ok()
+                and "Content-Range" not in resp.headers):
+            data = resp.get_data()
+            if len(data) >= 4096:
+                resp.set_data(gzip.compress(data, 1))
+                resp.headers["Content-Encoding"] = "gzip"
+                resp.headers.add("Vary", "Accept-Encoding")
+    except Exception:
+        pass
+    return resp
+
+
+@app.after_request
+def _attach_patch(resp):
+    """The answer of a request that changed the tags carries what changed (see _note_patch)."""
+    p = g.get("patch") if has_request_context() else None
+    if p and resp.status_code == 200 and resp.mimetype == "application/json":
+        try:
+            d = json.loads(resp.get_data())
+            if isinstance(d, dict) and not d.get("error"):
+                d["patch"] = p
+                resp.set_data(json.dumps(d))
+        except Exception:
+            pass
+    return resp
 
 
 def _house_after_edit(jid: str, model, roles_before: dict) -> None:
@@ -881,9 +1189,10 @@ _presence_lock = threading.Lock()
 
 
 def model_rev(jid: str) -> str:
-    """The version of the tags: changes whenever anything writes them (an edit, an undo, a re-tag, a split)."""
+    """The version of the tags: changes whenever anything writes them (an edit, an undo, a re-tag, a split).
+    V4.30: the file's date and the number of changes made by this server since it started."""
     try:
-        return str(os.stat(os.path.join(job_dir(jid), "model.json")).st_mtime_ns)
+        return f"{os.stat(os.path.join(job_dir(jid), 'model.json')).st_mtime_ns}.{_REV.get(secure_filename(jid), 0)}"
     except OSError:
         return ""
 
@@ -1260,6 +1569,7 @@ def start_workers() -> None:
             m["stage"] = "done" if m.get("built") else "review"
             with open(p, "w", encoding="utf-8") as fh:
                 json.dump(m, fh)
+    JOBINDEX.touch()
 
 
 # ================================================================ pages
@@ -1272,19 +1582,14 @@ def env_status() -> dict:
 
 
 def list_jobs(limit: int = 200, visible: bool = False) -> list[dict]:
-    """The newest jobs first; `visible`: only the ones the signed-in user may see."""
+    """The newest jobs first; `visible`: only the ones the signed-in user may see.
+    V4.30: from the index (core/jobindex.py) — no file is opened unless it changed. The dicts are copies
+    of the first level (the nested lists are shared: read them, do not change them)."""
     out = []
-    for name in sorted(os.listdir(JOBS), reverse=True):
-        p = os.path.join(JOBS, name, "meta.json")
-        if os.path.exists(p):
-            try:
-                with open(p, encoding="utf-8") as fh:
-                    m = json.load(fh)
-            except Exception:
-                continue
-            if visible and not can_see(m):
-                continue
-            out.append(m)
+    for m in JOBINDEX.metas():
+        if visible and not can_see(m):
+            continue
+        out.append(dict(m))
         if len(out) >= limit:
             break
     return out
@@ -1426,7 +1731,10 @@ def editor(jid):
             EDITLOCK.acquire(key, current_user_name())
         lock = lock_view(key)
         lock["view_only"] = request.args.get("view") == "1" and not lock["mine"]
-    return render_template("editor.html", meta=meta, roles=EDITOR_ROLES, lock=lock,
+    t = TIMES.totals(secure_filename(jid), current_user_name())          # V4.30: this person's working time on the file
+    work = {"idle_limit": work_idle_limit(), "work_s": round(t["work"], 1), "qc_s": round(t["qc"], 1),
+            "kind": time_kind(WF.stage(meta))}
+    return render_template("editor.html", meta=meta, roles=EDITOR_ROLES, lock=lock, work=work,
                            readonly=ro,
                            artifact_types=ARTIFACT_TYPES, pagination=PAGINATION_SUBTYPES,
                            numbering=LIST_NUMBERING, env=env_status(), cfg=load_config(),
@@ -1443,6 +1751,7 @@ def delete_job(jid):
     log_action("deleted", jid, meta.get("filename", ""))
     _stop(jid, wait=True)
     shutil.rmtree(job_dir(jid), ignore_errors=True)
+    JOBINDEX.touch(secure_filename(jid))
     EDITLOCK.release(secure_filename(jid), force=True)
     return redirect(url_for("index"))
 
@@ -1538,28 +1847,41 @@ def _page_doc(jid: str) -> pymupdf.Document:
 @app.route("/api/jobs")
 def api_jobs():
     batch = request.args.get("batch")
-    waiting = [j for j, _ in list(TASKS.queue) if j not in STOP]
+    me = current_user()
     locks = EDITLOCK.snapshot() if lock_enabled() else {}
-    out = []
-    for m in list_jobs(5000 if is_admin() else 1000, visible=True):
-        if batch and m.get("batch") != batch:
-            continue
-        d = {k: m.get(k) for k in ("id", "filename", "stage", "progress", "message",
-                                   "score_before", "score_after", "pages", "batch",
-                                   "built", "mode", "created", "error", "profile", "edited",
-                                   "built_at", "title", "nodes", "dirty", "owner", "assigned_to",
-                                   "work", "priority", "due", "batch_name")}
-        d["running"] = m.get("id") in RUNNING
-        d.update(WF.summary(m))
-        d["can_edit"] = WF.can_edit(m, current_user())
-        d["todo"] = WF.todo_kind(m, current_user())
-        h = locks.get(secure_filename(m.get("id") or ""))
-        if h:
-            d["locked_by"], d["lock_mine"] = h["user"], _same_user(h["user"], current_user_name())
-        if m.get("id") in waiting:
-            d["position"] = waiting.index(m["id"]) + 1
-        out.append(d)
-    return jsonify(out)
+    stamp = etag_of(JOBINDEX.stamp(), _locks_stamp(locks), _run_stamp(), batch, (me or {}).get("username"),
+                    (me or {}).get("role"), TIMES.stamp())
+
+    def build():
+        waiting = [j for j, _ in list(TASKS.queue) if j not in STOP]
+        pend = TIMES.pending_all()
+        see_times = is_admin() or RIGHTS.allowed(me, "view_times")
+        out = []
+        for m in list_jobs(5000 if is_admin() else 1000, visible=True):
+            if batch and m.get("batch") != batch:
+                continue
+            d = {k: m.get(k) for k in ("id", "filename", "stage", "progress", "message",
+                                       "score_before", "score_after", "pages", "batch",
+                                       "built", "mode", "created", "error", "profile", "edited",
+                                       "built_at", "title", "nodes", "dirty", "owner", "assigned_to",
+                                       "work", "priority", "due", "batch_name")}
+            d["running"] = m.get("id") in RUNNING
+            d.update(WF.summary(m))
+            d["can_edit"] = WF.can_edit(m, me)
+            d["todo"] = WF.todo_kind(m, me)
+            tf = _time_fields(m, pend)                          # V4.30: what the person spent on the file (and, with the right, everybody)
+            mine_t = next((x for x in tf["time_by"] if x["user"].lower() == current_user_name().lower()), None)
+            d["my_work_s"], d["my_qc_s"] = (mine_t["work_s"], mine_t["qc_s"]) if mine_t else (0, 0)
+            if see_times:
+                d["work_s"], d["qc_s"] = tf["work_s"], tf["qc_s"]
+            h = locks.get(secure_filename(m.get("id") or ""))
+            if h:
+                d["locked_by"], d["lock_mine"] = h["user"], _same_user(h["user"], current_user_name())
+            if m.get("id") in waiting:
+                d["position"] = waiting.index(m["id"]) + 1
+            out.append(d)
+        return out
+    return serve_cached(LIST_BYTES, ("jobs", (me or {}).get("username"), batch), stamp, build)
 
 
 @app.route("/api/dashboard")
@@ -1656,9 +1978,83 @@ def api_status(jid):
                                           "contrast")} | {"queue": queue_info(jid)})
 
 
+# V4.30: an answer that only changes when the file changes is built once for each version of it (and compressed
+# once): the next person, tab or heartbeat that asks gets the same bytes — or a 304 with nothing in it.
+class ByteCache:
+    def __init__(self, size: int):
+        self.size = size
+        self.d: "collections.OrderedDict[tuple, list]" = collections.OrderedDict()
+        self.lock = threading.Lock()
+
+    def get(self, key, etag: str):
+        with self.lock:
+            hit = self.d.get(key)
+            if hit is not None and hit[0] == etag:
+                self.d.move_to_end(key)
+                return hit
+        return None
+
+    def put(self, key, etag: str, raw: bytes) -> list:
+        hit = [etag, raw, None]
+        with self.lock:
+            self.d[key] = hit
+            while len(self.d) > self.size:
+                self.d.popitem(last=False)
+        return hit
+
+
+MODEL_BYTES = ByteCache(6)
+LINT_BYTES = ByteCache(24)
+LIST_BYTES = ByteCache(64)          # the lists of files (Users page, Admin → Files, the queue badge) — one per person
+
+
+def etag_of(*parts) -> str:
+    import hashlib
+    return 'W/"' + hashlib.md5(repr(parts).encode("utf-8")).hexdigest()[:20] + '"'
+
+
+def _locks_stamp(locks: dict) -> tuple:
+    return tuple(sorted((k, v["user"], int(v["idle_s"] // 60)) for k, v in locks.items()))
+
+
+def _run_stamp() -> tuple:
+    return (tuple(sorted(RUNNING)), tuple(j for j, _ in list(TASKS.queue)), tuple(sorted(STOP)))
+
+
+def _gzip_ok() -> bool:
+    return "gzip" in (request.headers.get("Accept-Encoding") or "")
+
+
+def _bytes_response(raw: bytes, gz: bytes | None, etag: str, mimetype: str = "application/json"):
+    use_gz = gz is not None and _gzip_ok()
+    resp = app.response_class(gz if use_gz else raw, mimetype=mimetype)
+    resp.headers["ETag"] = etag
+    resp.headers["Cache-Control"] = "private, no-cache"
+    resp.headers["Vary"] = "Accept-Encoding"
+    if use_gz:
+        resp.headers["Content-Encoding"] = "gzip"
+    return resp
+
+
+def serve_cached(cache: ByteCache, key, etag: str, build):
+    """`build()` (a JSON-able answer) once for each `etag`; 304 for a browser that holds it already."""
+    if request.headers.get("If-None-Match") == etag:
+        resp = app.response_class(status=304)
+        resp.headers["ETag"] = etag
+        resp.headers["Cache-Control"] = "private, no-cache"
+        resp.headers["Vary"] = "Accept-Encoding"
+        return resp
+    hit = cache.get(key, etag)
+    if hit is None:
+        hit = cache.put(key, etag, json.dumps(build()).encode("utf-8"))
+    if hit[2] is None and len(hit[1]) > 8192 and _gzip_ok():
+        hit[2] = gzip.compress(hit[1], 3)
+    return _bytes_response(hit[1], hit[2], etag)
+
+
 @app.route("/api/job/<jid>/model")
 def api_model(jid):
-    rev = model_rev(jid)
+    key = secure_filename(jid)
     model = get_model(jid)
     if not model.info.get("cell_zones_checked") and any(
             n.role in ("TD", "TH") and n.bbox is None for n in model.nodes.values()):
@@ -1668,39 +2064,34 @@ def api_model(jid):
             m2.info["cell_zones_checked"] = True
         model = get_model(jid)
     mats, sizes = page_geometry(jid)             # V4.28: read from the PDF once, not at every load
+    rev = model_rev(jid)
 
-    def disp(p, r):
-        a, b, c, d_, e, f = mats[p]
-        xs, ys = [], []
-        for x, y in ((r[0], r[1]), (r[2], r[1]), (r[0], r[3]), (r[2], r[3])):
-            xs.append(a * x + c * y + e)
-            ys.append(b * x + d_ * y + f)
-        return [round(min(xs), 2), round(min(ys), 2), round(max(xs), 2), round(max(ys), 2)]
+    def build():
+        order = {n.id: k for k, n in enumerate(model.ordered_nodes(), start=1)}
+        nums = edit.reading_numbers(model)
+        nodes = {n.id: _node_view(n, mats, order, nums) for n in model.nodes.values()}
+        return {"nodes": nodes, "roots": model.root_children, "pages": len(sizes),
+                "page_sizes": sizes, "title": model.title, "lang": model.lang,
+                "mode": model.mode, "warnings": model.warnings, "info": model.info,
+                "can_undo": bool(_stack(jid, "undo")), "can_redo": bool(_stack(jid, "redo")), "rev": rev,
+                "geom": _geom_stamp(key)}
+    resp = serve_cached(MODEL_BYTES, key, f'W/"{rev}-{_geom_stamp(key)}"', build)
+    if resp.status_code == 200 and not (_SHADOWS.get(key) is not None and _SHADOWS[key].owner is model):
+        resp.call_on_close(lambda: _warm_shadow(key, model, rev))      # so the first edit is as quick as the next
+    return resp
 
-    order = {n.id: k for k, n in enumerate(model.ordered_nodes(), start=1)}
-    nums = edit.reading_numbers(model)
-    nodes = {}
-    for n in model.nodes.values():
-        d = node_dict(n)
-        for k in ("mcids", "style", "parts", "bbox"):
-            d.pop(k, None)
-        d["order"] = order.get(n.id, 0)
-        d["num"], d["block"] = nums.get(n.id, ("", None))
-        rects = []
-        if n.bbox is not None and 0 <= n.page < len(mats):
-            rects.append([n.page, *disp(n.page, n.bbox), -1])
-        for k, pr in enumerate(n.parts):
-            pp = int(pr[0])
-            if 0 <= pp < len(mats):
-                rects.append([pp, *disp(pp, pr[1:]), k])
-        d["rects"] = rects
-        d["src_keys"] = len(n.src_keys)
-        d["blank_line"] = bool((n.style or {}).get("blank_line"))
-        nodes[n.id] = d
-    return jsonify({"nodes": nodes, "roots": model.root_children, "pages": len(sizes),
-                    "page_sizes": sizes, "title": model.title, "lang": model.lang,
-                    "mode": model.mode, "warnings": model.warnings, "info": model.info,
-                    "can_undo": bool(_stack(jid, "undo")), "can_redo": bool(_stack(jid, "redo")), "rev": rev})
+
+def _warm_shadow(key: str, model: DocModel, rev: str) -> None:
+    """After the editor got its tags: the copy for the first edit (core/modelsync.py), made while the person looks."""
+    try:
+        with req_lock(key):
+            if model_rev(key) != rev or get_model(key) is not model:
+                return                                 # changed meanwhile: the first edit makes it
+            sh = _shadow_of(key, model)
+            if sh.nums is None:
+                sh.nums, sh.order = _numbering(model)
+    except Exception:
+        pass
 
 
 @app.route("/api/job/<jid>/lock", methods=["GET", "POST"])
@@ -1724,8 +2115,8 @@ def api_lock(jid):
         if not ok:
             return jsonify({"ok": False, "error": lock_reason(h), **lock_view(jid)})
     elif act == "takeover":
-        if not is_admin():
-            return _err("only an admin takes a file over", 403)
+        if not (is_admin() or RIGHTS.allowed(me, "take_over")):
+            return _err("only an admin (or a person with the right) takes a file over", 403)
         before = EDITLOCK.holder(jid)
         EDITLOCK.acquire(jid, me_name, force=True)
         if before and not _same_user(before["user"], me_name):
@@ -1757,8 +2148,22 @@ def api_presence(jid):
         if request.args.get("hold") == "1":              # the editor of the person who has the file: "I am still here"
             EDITLOCK.renew(jid, me, active=request.args.get("active") == "1")
         lock = lock_view(jid)
+    # V4.30: the seconds this person worked since the last beat (only the active ones: a break is not reported)
+    # count for the file when the person is the one working in it — the holder of the lock
+    kind = time_kind(WF.stage(meta))
+    counting = bool(lock and lock.get("mine")) if lock_enabled() else bool(WF.can_edit(meta, current_user()))
+    try:
+        sec = float(request.args.get("w") or 0)
+    except ValueError:
+        sec = 0.0
+    if counting and sec > 0:
+        TIMES.add(jid, me, kind, sec)
+    mine_t = TIMES.totals(jid, me)
     return jsonify({"rev": rev, "here": here, "changed": bool(mine) and bool(rev) and mine != rev,
-                    "by": meta.get("edited_by") or "", "at": meta.get("edited") or "", "me": me, "lock": lock})
+                    "by": meta.get("edited_by") or "", "at": meta.get("edited") or "", "me": me, "lock": lock,
+                    "time": {"mine_s": round(mine_t["work"] + mine_t["qc"], 1), "work_s": round(mine_t["work"], 1),
+                             "qc_s": round(mine_t["qc"], 1), "kind": kind, "counting": counting,
+                             "idle_limit": work_idle_limit()}})
 
 
 @app.route("/job/<jid>/page/<int:pno>.png")
@@ -2469,6 +2874,14 @@ def api_undo(jid):
                 return jsonify({"error": f"{who} made the last change {max(1, int(ago // 60))} min ago — "
                                          f"{kind} it anyway?", "confirm": True, "by": who}), 409
         cur = os.path.join(job_dir(jid), "model.json")
+        key = secure_filename(jid)
+        base = model_rev(jid)
+        with _mc_lock:
+            hit = _model_cache.get(jid)
+            old_sh = _SHADOWS.get(key)
+        old_model = hit[1] if hit else None
+        if old_sh is not None and old_sh.owner is not old_model:
+            old_sh = None
         _push(jid, other, cur)
         last = os.path.join(_hist(jid, kind), stack[-1])
         tmp = cur + ".undo.tmp"                    # replaced whole, never half written (the learner reads it)
@@ -2476,6 +2889,24 @@ def api_undo(jid):
         replace_file(tmp, cur)
         os.remove(last)
         _model_cache.pop(jid, None)
+        _REV[key] = _REV.get(key, 0) + 1
+        if old_sh is not None and has_request_context():
+            try:                                   # V4.30: what the undo changed is told to the editor
+                new_model = get_model(jid)
+                changed, gone, tops = old_sh.diff(new_model)
+                prev = old_sh.nums if old_sh.nums is not None else edit.reading_numbers(old_model)
+                old_sh.commit(new_model, changed, gone, tops)
+                old_sh.owner = new_model
+                nums, order = _numbering(new_model)
+                old_sh.nums, old_sh.order = nums, order
+                with _mc_lock:
+                    _SHADOWS[key] = old_sh
+                rev = model_rev(jid)
+                _add_patch(_compute_patch(jid, new_model, prev, nums, order, base, rev, changed, gone, tops,
+                                          bool(_stack(jid, "undo")), bool(_stack(jid, "redo"))), base, rev)
+            except Exception as exc:
+                app.logger.warning("undo patch: %s", exc)
+                _SHADOWS.pop(key, None)
     update_meta(jid, dirty=True, edited_by=current_user_name() or "")
     learn_live(jid)
     return jsonify({"ok": True})
@@ -2483,7 +2914,8 @@ def api_undo(jid):
 
 @app.route("/api/job/<jid>/lint")
 def api_lint(jid):
-    return jsonify(lint(get_model(jid)))
+    model = get_model(jid)
+    return serve_cached(LINT_BYTES, secure_filename(jid), f'W/"{model_rev(jid)}"', lambda: lint(model))
 
 
 @app.route("/api/job/<jid>/doc", methods=["POST"])
@@ -2503,9 +2935,7 @@ def _contrast_payload(jid: str) -> dict:
     data = load_contrast(job_dir(jid))
     if data is None:
         return {"available": False}
-    doc = _page_doc(jid)
-    mats = [tuple(edit.display_matrix(p)) for p in doc]
-    doc.close()
+    mats, _ = page_geometry(jid)                  # V4.30: kept while the PDF stays the same (was: the PDF opened at every load)
     out = []
     for i in data.get("issues", []):
         a, b, c, d_, e, f = mats[i["page"]]
@@ -3615,7 +4045,26 @@ def api_profiles():
 WORK_STATES = WF.WORK_STATES
 
 
-def _job_row(m: dict) -> dict:
+def _time_fields(m: dict, pend: dict | None = None) -> dict:
+    """The working time of a file for a list (V4.30): Working and QC, and who spent it (what is written, and the
+    seconds counted since — `pend` is TIMES.pending_all())."""
+    t = m.get("time") or {}
+    by: dict[str, dict] = {u: {"work": float(v.get("work") or 0), "qc": float(v.get("qc") or 0), "last": v.get("last") or ""}
+                           for u, v in (t.get("by") or {}).items()}
+    work, qc = float(t.get("work") or 0), float(t.get("qc") or 0)
+    for (u, kind), sec in ((pend or {}).get(secure_filename(m.get("id") or "")) or {}).items():
+        row = by.setdefault(u, {"work": 0.0, "qc": 0.0, "last": ""})
+        row[kind] += sec
+        if kind == "work":
+            work += sec
+        else:
+            qc += sec
+    rows = [{"user": u, "work_s": round(v["work"]), "qc_s": round(v["qc"]), "last": v["last"]} for u, v in by.items()]
+    rows.sort(key=lambda x: -(x["work_s"] + x["qc_s"]))
+    return {"work_s": round(work), "qc_s": round(qc), "time_by": rows[:12], "time_last": t.get("last") or ""}
+
+
+def _job_row(m: dict, pend: dict | None = None) -> dict:
     sa, sb = m.get("score_after") or {}, m.get("score_before") or {}
     return {"id": m.get("id"), "filename": m.get("filename"), "stage": m.get("stage"),
             "progress": m.get("progress"), "message": m.get("message"), "pages": m.get("pages") or 0,
@@ -3629,7 +4078,7 @@ def _job_row(m: dict) -> dict:
             "mode": m.get("mode") or "", "nodes": m.get("nodes") or 0, "sample_id": m.get("sample_id") or "",
             "samples_changed": (m.get("samples") or {}).get("changed"), "lang": m.get("lang") or "",
             "profile_history": (m.get("profile_history") or [])[-3:], "approved_at": m.get("approved_at") or "",
-            **WF.summary(m)}
+            **_time_fields(m, pend), **WF.summary(m)}
 
 
 def _set_assignee(jid: str, to: str, how: str = "allocated") -> dict:
@@ -3778,8 +4227,12 @@ def _auto_assign(meta: dict) -> None:
 def api_wf_queue():
     """What waits for the signed-in user (the header badge)."""
     me = current_user()
-    q = WF.my_queue(me, list_jobs(100000, visible=True))
-    return jsonify({"ok": True, **q, "role": WF.role_of(me), "role_label": WF.ROLE_LABELS.get(WF.role_of(me), "")})
+
+    def build():
+        q = WF.my_queue(me, list_jobs(100000, visible=True))
+        return {"ok": True, **q, "role": WF.role_of(me), "role_label": WF.ROLE_LABELS.get(WF.role_of(me), "")}
+    return serve_cached(LIST_BYTES, ("wfq", (me or {}).get("username")),
+                        etag_of(JOBINDEX.stamp(), (me or {}).get("username"), (me or {}).get("role")), build)
 
 
 @app.route("/api/wf/next", methods=["POST"])
@@ -3948,9 +4401,16 @@ def api_admin_workflow():
             cur = {**WF.DEFAULTS, **(cfg.get("workflow") or {})}
             for k in WF.DEFAULTS:
                 if k in b:
-                    cur[k] = bool(b[k])
+                    if k == "work_idle_s":                    # V4.30: seconds, 30 … 900
+                        try:
+                            cur[k] = max(30, min(900, int(b[k])))
+                        except (TypeError, ValueError):
+                            return _err("the idle time is a number of seconds (30 to 900)")
+                    else:
+                        cur[k] = bool(b[k])
             cfg["workflow"] = cur
-        log_action("workflow settings", "", "", ", ".join(f"{k}={'on' if v else 'off'}" for k, v in cur.items()))
+        log_action("workflow settings", "", "", ", ".join(
+            f"{k}={v}" if k == "work_idle_s" else f"{k}={'on' if v else 'off'}" for k, v in cur.items()))
     from collections import Counter
     jobs = list_jobs(100000)
     by = Counter(WF.stage(m) for m in jobs)
@@ -4103,12 +4563,17 @@ def api_admin_overview():
 @app.route("/api/admin/files")
 def api_admin_files():
     locks = EDITLOCK.snapshot() if lock_enabled() else {}
-    rows = [_job_row(m) for m in list_jobs(100000)]
-    for r in rows:
-        h = locks.get(secure_filename(r.get("id") or ""))
-        if h:
-            r["locked_by"], r["lock_idle_s"] = h["user"], h["idle_s"]
-    return jsonify(rows)
+    stamp = etag_of(JOBINDEX.stamp(), _locks_stamp(locks), TIMES.stamp())
+
+    def build():
+        pend = TIMES.pending_all()
+        rows = [_job_row(m, pend) for m in list_jobs(100000)]
+        for r in rows:
+            h = locks.get(secure_filename(r.get("id") or ""))
+            if h:
+                r["locked_by"], r["lock_idle_s"] = h["user"], h["idle_s"]
+        return rows
+    return serve_cached(LIST_BYTES, ("admin_files",), stamp, build)
 
 
 @app.route("/api/admin/files/unlock", methods=["POST"])
@@ -4260,6 +4725,7 @@ def api_admin_delete():
             continue
         _stop(i, wait=True)
         shutil.rmtree(job_dir(i), ignore_errors=True)
+        JOBINDEX.touch(secure_filename(i))
         EDITLOCK.release(secure_filename(i), force=True)
         log_action("deleted", i, meta.get("filename", ""))
         done += 1
@@ -4347,6 +4813,92 @@ def api_admin_download():
                      download_name=f"accessible_pdfs_{datetime.now():%Y%m%d_%H%M}.zip")
 
 
+# ------------------------------------------------------------------------ working time (V4.30)
+@app.route("/api/job/<jid>/time")
+def api_job_time(jid):
+    """The working time of one file: Working and QC, and who spent it. Everybody who may see the file sees its totals
+    and their own time; an admin sees every person and every day."""
+    jid = secure_filename(jid)
+    meta = read_meta(jid)
+    t = TIMES.totals(jid)
+    me = current_user_name()
+    out = {"work_s": round(t["work"]), "qc_s": round(t["qc"]), "idle_limit": work_idle_limit(),
+           "mine": {k: round(v) for k, v in TIMES.totals(jid, me).items()}}
+    if is_admin() or RIGHTS.allowed(current_user(), "view_times"):
+        by = {u: dict(v) for u, v in ((meta.get("time") or {}).get("by") or {}).items()}
+        for (u, kind), sec in list((TIMES._pend.get(jid) or {}).items()):         # (held and not written yet)
+            row = by.setdefault(u, {"work": 0.0, "qc": 0.0})
+            row[kind] = float(row.get(kind) or 0) + sec
+        out["users"] = sorted(({"user": u, "work_s": round(float(v.get("work") or 0)), "qc_s": round(float(v.get("qc") or 0)),
+                                "last": v.get("last") or ""} for u, v in by.items()), key=lambda x: -(x["work_s"] + x["qc_s"]))
+        out["days"] = TIMES.days(jid) if is_admin() else {}
+    return jsonify(out)
+
+
+def time_report(days: int, user: str = "") -> dict:
+    """Admin: who worked how long, day by day — Working and QC — over the last `days` days."""
+    from datetime import date
+    since = (date.today() - timedelta(days=max(1, days) - 1)).isoformat()
+    who: dict[str, dict] = {}
+    per_day: dict[str, dict] = {}
+    files: dict[str, int] = {}
+    low = user.lower()
+    for m in JOBINDEX.metas():
+        t = m.get("time")
+        if not t or (t.get("last") or "")[:10] < since:
+            continue
+        for day, people in TIMES.days(m.get("id") or "").items():
+            if day < since:
+                continue
+            for u, v in people.items():
+                if low and u.lower() != low:
+                    continue
+                row = who.setdefault(u, {"user": u, "work_s": 0.0, "qc_s": 0.0, "files": set(), "days": {}})
+                row["work_s"] += float(v.get("work") or 0)
+                row["qc_s"] += float(v.get("qc") or 0)
+                row["files"].add(m.get("id"))
+                dd = row["days"].setdefault(day, [0.0, 0.0])
+                dd[0] += float(v.get("work") or 0)
+                dd[1] += float(v.get("qc") or 0)
+                pd = per_day.setdefault(day, {"day": day, "work_s": 0.0, "qc_s": 0.0})
+                pd["work_s"] += float(v.get("work") or 0)
+                pd["qc_s"] += float(v.get("qc") or 0)
+    today = date.today().isoformat()
+    for jid, d in TIMES.pending_all().items():                          # the seconds counted and not written yet
+        for (u, kind), sec in d.items():
+            if low and u.lower() != low or today < since:
+                continue
+            row = who.setdefault(u, {"user": u, "work_s": 0.0, "qc_s": 0.0, "files": set(), "days": {}})
+            row[kind + "_s"] += sec
+            row["files"].add(jid)
+            dd = row["days"].setdefault(today, [0.0, 0.0])
+            dd[0 if kind == "work" else 1] += sec
+            pd = per_day.setdefault(today, {"day": today, "work_s": 0.0, "qc_s": 0.0})
+            pd[kind + "_s"] += sec
+    rows = []
+    for row in who.values():
+        row["files"] = len(row["files"])
+        row["work_s"], row["qc_s"] = round(row["work_s"]), round(row["qc_s"])
+        row["days"] = {d: [round(a), round(b)] for d, (a, b) in sorted(row["days"].items())}
+        rows.append(row)
+    rows.sort(key=lambda r: -(r["work_s"] + r["qc_s"]))
+    return {"since": since, "days": max(1, days), "users": rows,
+            "per_day": [{"day": d, "work_s": round(v["work_s"]), "qc_s": round(v["qc_s"])} for d, v in sorted(per_day.items())],
+            "work_s": sum(r["work_s"] for r in rows), "qc_s": sum(r["qc_s"] for r in rows), "idle_limit": work_idle_limit()}
+
+
+@app.route("/api/admin/time")
+def api_admin_time():
+    try:
+        days = max(1, min(400, int(request.args.get("days", 30))))
+    except ValueError:
+        days = 30
+    user = (request.args.get("user") or "").strip()
+    return serve_cached(LIST_BYTES, ("admin_time", days, user.lower()),
+                        etag_of(JOBINDEX.stamp(), TIMES.stamp(), days, user.lower(), int(time.time() // 20)),
+                        lambda: time_report(days, user))
+
+
 @app.route("/api/admin/export.csv")
 def api_admin_export():
     import csv
@@ -4354,18 +4906,28 @@ def api_admin_export():
     w = csv.writer(out)
     w.writerow(["file", "folder", "uploaded by", "given to", "work", "step", "rework rounds", "QA", "Final QA",
                 "comments", "comments open", "PAC reports", "last PAC", "priority", "due", "pages", "profile",
-                "status", "errors before", "errors after", "uploaded", "given", "last edit", "built"])
+                "status", "errors before", "errors after", "uploaded", "given", "last edit", "built",
+                "working time (min)", "QC time (min)", "time by"])
+    pend = TIMES.pending_all()
     for m in list_jobs(100000):
-        r = _job_row(m)
+        r = _job_row(m, pend)
         pl = r.get("pac_last") or {}
         w.writerow([r["filename"], r["batch_name"], r["owner"], r["assigned_to"], WORK_STATES.get(r["work"], r["work"]),
                     r["wstage_label"], r["rework"], r["qa_user"], r["fqa_user"], r["comments"], r["comments_open"],
                     r["pac"], (pl.get("result") or "") + (f" ({pl.get('errors')} failures)" if pl.get("errors") else ""),
                     r["priority"], r["due"], r["pages"], r["profile"], r["stage"], r["errors_before"],
-                    r["errors_after"], r["created"], r["assigned_at"], r["edited"], r["built_at"]])
+                    r["errors_after"], r["created"], r["assigned_at"], r["edited"], r["built_at"],
+                    round(r["work_s"] / 60, 1), round(r["qc_s"] / 60, 1),
+                    "; ".join(f"{x['user']} {round(x['work_s'] / 60)}+{round(x['qc_s'] / 60)} min" for x in r["time_by"])])
     data = io.BytesIO(out.getvalue().encode("utf-8-sig"))
     return send_file(data, mimetype="text/csv", as_attachment=True,
                      download_name=f"files_{datetime.now():%Y%m%d_%H%M}.csv")
+
+
+@app.route("/api/admin/rights")
+def api_admin_rights():
+    """Every right and what each role means by default (the Rights dialog of Admin → Users)."""
+    return jsonify({"rights": RIGHTS.catalog(), "roles": ["production", "qa", "final_qa"]})
 
 
 @app.route("/api/admin/users", methods=["GET", "POST"])
@@ -4403,12 +4965,16 @@ def api_admin_user(name):
     b = request.get_json(force=True) or {}
     try:
         u = ACCOUNTS.update(name, name=b.get("name"), role=b.get("role"), active=b.get("active"),
-                            password=b.get("password") or None, email=b.get("email"), note=b.get("note"))
+                            password=b.get("password") or None, email=b.get("email"), note=b.get("note"),
+                            rights=b.get("rights") if isinstance(b.get("rights"), dict) else None)
     except AccountError as exc:
         return _err(str(exc))
     what = [k for k in ("name", "role", "active", "email", "note") if b.get(k) is not None]
     if b.get("password"):
         what.append("password reset")
+    if isinstance(b.get("rights"), dict):
+        what.append("rights: " + ", ".join(f"{k} {'allow' if v is True or v == 'allow' else 'deny' if v is False or v == 'deny' else 'default'}"
+                                           for k, v in b["rights"].items()))
     log_action("changed user", "", "", f"{name}: {', '.join(what)}")
     return jsonify({"ok": True, "user": u})
 
@@ -4511,6 +5077,7 @@ def api_admin_cleanup():
         return jsonify({"ok": True, "count": len(hits), "size": size, "files": [m.get("filename") for m in hits[:20]]})
     for m in hits:
         shutil.rmtree(job_dir(m["id"]), ignore_errors=True)
+        JOBINDEX.touch(secure_filename(m["id"]))
     log_action("cleaned up", "", "", f"{len(hits)} {which} file(s) older than {days} days")
     return jsonify({"ok": True, "count": len(hits), "size": size})
 
@@ -5057,7 +5624,14 @@ def _live_run(jid: str, by: str, reviewer: bool) -> dict:
         t0 = time.time()
         res: dict = {}
         try:
-            p = subprocess.run(cmd, cwd=BASE, env=dict(os.environ), timeout=600, capture_output=True, text=True)
+            # V4.30: the learner works in the background — below the web server, so a person's next click is
+            # never slower because the tool is learning from the last one
+            kw: dict = {}
+            if os.name == "nt":
+                kw["creationflags"] = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+            else:
+                kw["preexec_fn"] = lambda: os.nice(12)
+            p = subprocess.run(cmd, cwd=BASE, env=dict(os.environ), timeout=600, capture_output=True, text=True, **kw)
             try:
                 res = json.loads((p.stdout or "{}").strip().splitlines()[-1])
             except (ValueError, IndexError):
@@ -5421,17 +5995,57 @@ def api_job_brain_similar_apply(jid):
 from core import zonelearn as ZONES  # noqa: E402
 
 
+_AUTO_KEPT: "collections.OrderedDict[str, tuple[int, DocModel]]" = collections.OrderedDict()
+
+
 def _auto_of(jid: str):
+    """The tool's own proposal for the file (auto_model.json) — read once, kept while the file is the same (it was
+    parsed again for every question about zones: 160 ms for a 300-page book)."""
     ap = os.path.join(job_dir(jid), "auto_model.json")
-    if not os.path.exists(ap):
+    try:
+        mt = os.stat(ap).st_mtime_ns
+    except OSError:
         return None
+    key = secure_filename(jid)
+    with _mc_lock:
+        hit = _AUTO_KEPT.get(key)
+        if hit is not None and hit[0] == mt:
+            _AUTO_KEPT.move_to_end(key)
+            return hit[1]
     with open(ap, encoding="utf-8") as fh:
-        return DocModel.from_json(fh.read())
+        auto = DocModel.from_json(fh.read())
+    with _mc_lock:
+        _AUTO_KEPT[key] = (mt, auto)
+        while len(_AUTO_KEPT) > 6:
+            _AUTO_KEPT.popitem(last=False)
+    return auto
 
 
 @app.route("/api/job/<jid>/zones/similar")
 def api_zones_similar(jid):
     """The other places of this file that look like a zone a person has just cut or joined."""
+    key = secure_filename(jid)
+    try:
+        d = job_dir(jid)
+        stamp = etag_of(model_rev(jid), *(os.path.getmtime(os.path.join(d, f)) if os.path.exists(os.path.join(d, f)) else 0
+                                         for f in ("zone_pairs.npz", "auto_model.json")))
+    except Exception:
+        stamp = None
+    if stamp is not None:
+        # V4.30: the same question about the same version of the file has the same answer
+        hit = ZONE_BYTES.get(key, stamp)
+        if hit is not None:
+            return _bytes_response(hit[1], hit[2], stamp)
+    resp = _zones_similar_answer(jid)
+    if stamp is not None and resp.status_code == 200 and not resp.headers.get("Content-Encoding"):
+        ZONE_BYTES.put(key, stamp, resp.get_data())
+    return resp
+
+
+ZONE_BYTES = ByteCache(24)
+
+
+def _zones_similar_answer(jid):
     try:
         r = ZONES.similar(job_dir(jid), get_model(jid), _auto_of(jid))
     except Exception as exc:

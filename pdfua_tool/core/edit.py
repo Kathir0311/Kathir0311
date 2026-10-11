@@ -2667,11 +2667,12 @@ def is_block(model: DocModel, n: StructNode) -> bool:
     return n.parent is None or model.nodes[n.parent].role in FLOW_ROLES
 
 
-def reading_numbers(model: DocModel) -> dict[str, tuple[str, int | None]]:
-    """id -> (display number like '5' or '5.2', block number or None)."""
+def reading_numbers(model: DocModel, ordered: list | None = None) -> dict[str, tuple[str, int | None]]:
+    """id -> (display number like '5' or '5.2', block number or None). `ordered`: model.ordered_nodes() when the
+    caller has it already (V4.30)."""
     out: dict[str, tuple[str, int | None]] = {}
     block = 0
-    for n in model.ordered_nodes():
+    for n in (ordered if ordered is not None else model.ordered_nodes()):
         if n.artifact or (n.parent and out.get(n.parent, ("", None))[0] == ""
                           and n.parent in out and not is_block(model, n)):
             out[n.id] = ("", None)

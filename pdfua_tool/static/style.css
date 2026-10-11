@@ -1607,3 +1607,14 @@ button.linkish{border:0;background:none;color:var(--accent);padding:0 2px;font-s
 .dzstate{font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;background:var(--info-soft);color:var(--info);white-space:nowrap}
 .dzstate.on{background:var(--ok-soft);color:var(--ok)}
 @media (prefers-reduced-motion:reduce){.dzorb i{animation:none}.dzsay{transition:none}}
+
+
+/* ===== V4.30: a big file stays quick ===== */
+/* the rows of the tag tree that are off the screen are not laid out or painted until they are scrolled to */
+.tree .node{content-visibility:auto;contain-intrinsic-size:auto 26px}
+.tree{contain:content}
+.workchip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:3px 9px;border-radius:999px;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);white-space:nowrap;cursor:default;font-variant-numeric:tabular-nums}
+.workchip.paused{color:var(--muted);border-style:dashed}
+
+/* V4.30: what a person has not been given the right to is not offered (the server refuses it as well) */
+.noright-build #buildBtn,.noright-download a[href*="/download/"],.noright-download a[href*="/support/"]{display:none!important}

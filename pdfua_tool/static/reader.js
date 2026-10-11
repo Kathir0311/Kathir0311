@@ -588,7 +588,7 @@
     if (!ov) return;
     ov.querySelectorAll('.rdhl').forEach((x) => x.remove());
     const it = items[cur];
-    if (!it || !pane.offsetParent && !playing) return;
+    if (!it || pane.classList.contains('hidden') && !playing) return;
     const n = ED.model.nodes[it.id];
     if (!n) return;
     (n.rects || []).filter((r) => r[0] === ED.page).forEach((r) => {
@@ -719,7 +719,7 @@
       drawHighlight();
     },
     hide() { pause(); clearPage(); const c = document.getElementById('rdCap'); if (c) c.classList.remove('show'); },
-    draw(ov) { if (pane.offsetParent) drawHighlight(ov); },
+    draw(ov) { if (!pane.classList.contains('hidden')) drawHighlight(ov); },      // (offsetParent made the browser lay everything out first)
     modelLoaded() { if (!playing) built = false; },
     get items() { return items; },
     get cur() { return cur; },
