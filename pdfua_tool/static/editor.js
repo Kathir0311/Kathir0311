@@ -1125,9 +1125,12 @@
     if (document.hidden || hbBusy || !model) return;
     hbBusy = true;
     try {
-      const r = await fetch(api('/presence') + '?rev=' + encodeURIComponent(rev) + '&page=' + page);
+      const active = Date.now() - lastTouch < 60000;
+      const r = await fetch(api('/presence') + '?rev=' + encodeURIComponent(rev) + '&page=' + page +
+        (lock && lock.mine ? '&hold=1' : '') + (active ? '&active=1' : ''));
       if (!r.ok) return;
       const d = await r.json();
+      if (d.lock !== undefined) setLock(d.lock);
       showHere(d.here || []);
       if (!d.changed) { hideStale(); return; }
       const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
@@ -1140,6 +1143,93 @@
   const busyNow = () => !!document.querySelector('#uaBusy.on');
   setInterval(heartbeat, 6000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) heartbeat(); });
+  // ------------------------------------------- V4.29: one person at a time in a file
+  // Whoever opens a file to work in it has it; the others see it — the tags, the pages, the issues — and cannot change
+  // anything (the server refuses every change). The lock is kept while this editor is open, ends when the person
+  // leaves or is idle for 10 minutes, and an admin can take a file over.
+  let lock = window.LOCK || null;
+  const viewOnly = !!(lock && lock.view_only);        // opened with "view only": the person did not ask for the file
+  let lockBar = null;
+  window.LOCKSTATE = lock;
+  function lockedView() { return !!lock && !lock.mine; }
+  function setLock(l) {
+    const was = lock;
+    lock = l && l.enabled !== false ? l : null;
+    window.LOCKSTATE = lock;
+    document.body.classList.toggle('lockedview', lockedView());
+    renderLockChip();
+    renderLockBar();
+    if (was && lock) {
+      if (was.mine && !lock.mine) UA.toast(lock.holder ? `${lock.holder} has the file now — you can look at it, not change it` : 'Your hold on this file ended', 5200);
+      if (!was.mine && lock.mine) { UA.toast('The file is yours now — you can change it', 3200); load(focus); }
+    }
+  }
+  function renderLockChip() {
+    const c = $('lockChip');
+    if (!c) return;
+    c.classList.toggle('hidden', !lock);
+    if (!lock) return;
+    c.classList.toggle('mine', lock.mine);
+    c.classList.toggle('view', !lock.mine);
+    if (lock.mine) {
+      c.textContent = '🔒 You are editing';
+      c.title = 'You have this file: everybody else can look at it, not change it. Click to let go of it.';
+      c.setAttribute('aria-label', 'You are editing this file. Activate to let go of it.');
+    } else {
+      c.textContent = lock.holder ? '👁 View only · ' + lock.holder : '👁 View only';
+      c.title = lock.reason || 'You are looking at the file. Press “Edit this file” to change it.';
+      c.setAttribute('aria-label', c.title);
+    }
+  }
+  function renderLockBar() {
+    if (!lock || lock.mine) { if (lockBar) { lockBar.remove(); lockBar = null; } return; }
+    const free = !lock.holder;
+    const text = free
+      ? (viewOnly ? 'You are only looking at this file.' : 'The file is free now.')
+      : `${lock.holder} is working on this file now — you can look at it, not change it.`;
+    const btns = [];
+    if (free) btns.push(el('button', { class: 'sm primary', type: 'button', text: 'Edit this file', onclick: takeFile }));
+    else if (lock.can_take_over) btns.push(el('button', { class: 'sm', type: 'button', text: 'Take over', title: 'Admin: take the file from ' + lock.holder, onclick: takeOver }));
+    const bar = el('div', { id: 'lockBar', class: 'robanner lockbar', role: 'status' },
+      el('span', { class: 'lock', text: free ? '👁' : '🔒' }), el('span', { text }), ...btns);
+    if (lockBar) lockBar.replaceWith(bar); else {
+      const mid = document.querySelector('.editor > section.panel');
+      if (mid) { bar.classList.add('inpanel'); mid.prepend(bar); } else document.body.append(bar);
+    }
+    lockBar = bar;
+  }
+  async function takeFile() {
+    const r = await UA.post(api('/lock'), { action: 'acquire' });
+    if (r.error && !r.ok) UA.toast(r.error, 4600);
+    setLock(r);
+  }
+  async function takeOver() {
+    if (!confirm(`${lock.holder} is working in this file. Take it over? Everything they did is already saved; from now on they can look, not change.`)) return;
+    const r = await UA.post(api('/lock'), { action: 'takeover' });
+    if (r.error) UA.toast(r.error, 4600);
+    setLock(r);
+  }
+  async function letGo() {
+    const r = await UA.post(api('/lock'), { action: 'release' });
+    setLock(r);
+    UA.toast('You let go of the file — others can change it now', 3600);
+  }
+  const lockChipEl = $('lockChip');
+  if (lockChipEl) lockChipEl.addEventListener('click', () => { if (lock && lock.mine) letGo(); else if (lock && !lock.holder) takeFile(); });
+  // somebody took the file while this page was open: the next change is refused (423) and the page turns into a view
+  document.addEventListener('ua-locked', (e) => {
+    const d = e.detail || {};
+    setLock({ ...(lock || {}), enabled: true, mine: false, free: false, holder: d.by || '', reason: d.error, since: d.since || '' });
+  });
+  // leaving: let go (a closed tab that cannot, is let go after 40 seconds)
+  window.addEventListener('pagehide', () => {
+    if (lock && lock.mine) {
+      try { navigator.sendBeacon(api('/lock'), new Blob([JSON.stringify({ action: 'release' })], { type: 'application/json' })); } catch (e) { /* the server lets go by itself */ }
+    }
+  });
+  renderLockChip();
+  renderLockBar();
+  document.body.classList.toggle('lockedview', lockedView());
   function actionButtons(n) {
     const row = el('div', { class: 'btnrow' });
     [['↑', 'up', 'Move up (Alt+↑)'], ['↓', 'down', 'Move down (Alt+↓)'], ['⇤', 'outdent', 'Out of parent (Alt+←)'],
@@ -2210,7 +2300,7 @@
       onclick: think });
     box.append(el('div', { class: 'brow' },
       el('div', {}, el('div', { class: 'bq', text: q != null ? q + ' %' : '—' }),
-        el('div', { class: 'tiny muted', text: 'AI brain: tagging confidence' })),
+        el('div', { class: 'tiny muted', text: 'Dez AI: tagging confidence' })),
       el('div', { class: 'spacer' }), btn));
     if (facts.length) box.append(el('div', { class: 'bfacts' }, ...facts));
     if (sim) box.append(el('div', { class: 'tiny muted', style: 'margin-top:6px', text: 'Learned most from: ' + sim }));
@@ -2226,7 +2316,7 @@
     }
     if (!info.version) box.append(el('div', { class: 'tiny muted', style: 'margin-top:6px',
       text: b.on ? 'The brain has not looked at this file yet — press Think again.'
-        : 'This file\u2019s profile does not use the AI brain. Press Think again, or pick “Smart AI (all samples)” in the profile chip.' }));
+        : 'This file\u2019s profile does not use Dez AI\u2019s brain. Press Think again, or pick “Smart AI (all samples)” in the profile chip.' }));
     if (t.running) box.append(el('div', { class: 'tiny muted', text: `${t.message || 'working'} — ${Math.round((t.progress || 0) * 100)} %` }));
     else if (t.result && t.result.error) box.append(el('div', { class: 'tiny', style: 'color:var(--err)', text: t.result.error }));
     return box;

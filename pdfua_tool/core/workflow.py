@@ -78,6 +78,7 @@ DEFAULTS = {
     "return_to_sender": True,       # rework from Final QA goes back to Final QA
     "require_checklist": False,     # approval needs every checklist line ticked
     "auto_assign": False,           # a file reaching QA / Final QA goes to the checker with the fewest files
+    "file_lock": True,              # V4.29: one person at a time in a file — the others can look, not change
 }
 SETTING_LABELS = {
     "require_pac": ("PAC report before QA", "Production uploads the PAC report of the built PDF to send a file to QA."),
@@ -89,6 +90,7 @@ SETTING_LABELS = {
     "return_to_sender": ("Rework goes back to who sent it", "A file Final QA sent to rework goes straight back to Final QA (not through QA again)."),
     "require_checklist": ("Checklist before approval", "QA and Final QA tick every line of the checklist (ok or n/a) to approve."),
     "auto_assign": ("Give checks out by themselves", "A file reaching QA / Final QA goes to the checker with the fewest files waiting. Off: checkers pick from the queue."),
+    "file_lock": ("One person at a time in a file", "Whoever opens a file to work in it has it: everybody else can open it and look, but no change is accepted until the person leaves, goes idle for 10 minutes, or an admin takes the file over."),
 }
 PRIORITY_RANK = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
 

@@ -227,7 +227,14 @@
       const errs = f.errors_after != null ? `${f.errors_before ?? ''} → ${f.errors_after}` : (f.errors_before ?? '');
       const tr = el('tr', { class: 'frow' + (sel.has(f.id) ? ' picked' : '') + (openRow === f.id ? ' open' : ''), style: `animation-delay:${Math.min(i, 25) * 12}ms` },
         el('td', { class: 'ck' }, ck),
-        el('td', {}, el('a', { href: '/job/' + f.id, text: f.filename }),
+        el('td', {}, el('a', { href: '/job/' + f.id + (f.locked_by ? '?view=1' : ''), text: f.filename }),
+          f.locked_by ? el('button', { class: 'lockbadge', type: 'button', title: `${f.locked_by} has this file open${f.lock_idle_s > 60 ? ' (idle ' + Math.round(f.lock_idle_s / 60) + ' min)' : ''} — click to unlock it`,
+            text: '🔒 ' + f.locked_by, onclick: async (e) => {
+              e.stopPropagation();
+              if (!confirm(`${f.locked_by} has this file open. Unlock it? They can then only look until they take it again.`)) return;
+              const r = await post('/api/admin/files/unlock', { ids: [f.id] });
+              if (!r.error) { UA.toast('Unlocked'); loadFiles(); }
+            } }) : null,
           el('div', { class: 'tiny muted', text: [f.batch_name ? '📁 ' + (f.rel_path || f.batch_name) : '', fmt(f.created)].filter(Boolean).join(' · ') })),
         el('td', {}, f.assigned_to ? el('span', { class: 'who' }, el('span', { class: 'avatar sm', text: f.assigned_to[0].toUpperCase() }), f.assigned_to)
           : el('span', { class: 'muted small', text: 'pool' })),
@@ -303,8 +310,10 @@
   });
   const ids = () => [...sel];
   async function after(r, msg) {
-    if (r && !r.error) { UA.toast(typeof msg === 'function' ? msg(r) : msg); await loadFiles(); overview(); }
+    if (r && !r.error) { UA.toast(typeof msg === 'function' ? msg(r) : msg, (r.skipped || []).length ? 7000 : undefined); await loadFiles(); overview(); }
   }
+  // V4.29: a file somebody works in is left alone by the steps for many files — say which
+  const skippedNote = (r) => (r.skipped || []).length ? ` · left alone: ${r.skipped.slice(0, 3).join(', ')}${r.skipped.length > 3 ? ' …' : ''}` : '';
   $('bGive').addEventListener('click', async () => after(await post('/api/admin/files/assign', { ids: ids(), to: $('bTo').value }), `Given to ${$('bTo').value}`));
   $('bSpread').addEventListener('click', () => $('spreadDlg').showModal());
   $('spreadGo').addEventListener('click', async () => {
@@ -358,7 +367,7 @@
   $('profGo').addEventListener('click', async () => {
     $('profDlg').close();
     after(await post('/api/admin/files/profile', { ids: ids(), profile: $('bProfile').value, reanalyse: $('profRean').checked }),
-      (r) => `${r.changed} file(s) now ${$('bProfile').value}` + (r.busy ? ` · ${r.busy} busy` : '') + ($('profRean').checked ? ' — analysing again' : ''));
+      (r) => `${r.changed} file(s) now ${$('bProfile').value}` + (r.busy ? ` · ${r.busy} busy` : '') + ($('profRean').checked ? ' — analysing again' : '') + skippedNote(r));
   });
   $('bLearn').addEventListener('click', async () => {
     const notOk = files.filter((f) => sel.has(f.id) && f.work !== 'approved').length;
@@ -366,10 +375,10 @@
     const r = await post('/api/admin/samples/from_jobs', { ids: ids() });
     if (!r.error) UA.toast(`${r.added} file(s) added to the samples — learning now` + (r.skipped ? ` · ${r.skipped} not analysed yet` : ''));
   });
-  $('bBuild').addEventListener('click', async () => after(await post('/api/admin/files/build', { ids: ids() }), (r) => `${r.started} build(s) started`));
+  $('bBuild').addEventListener('click', async () => after(await post('/api/admin/files/build', { ids: ids() }), (r) => `${r.started} build(s) started` + skippedNote(r)));
   $('bRean').addEventListener('click', async () => {
     if (!confirm(`Analyse ${sel.size} file(s) again from scratch? Their tags and hand edits are replaced.`)) return;
-    after(await post('/api/admin/files/reanalyze', { ids: ids() }), (r) => `${r.started} started` + (r.busy ? `, ${r.busy} busy` : ''));
+    after(await post('/api/admin/files/reanalyze', { ids: ids() }), (r) => `${r.started} started` + (r.busy ? `, ${r.busy} busy` : '') + skippedNote(r));
   });
   $('bZip').addEventListener('click', () => {
     const built = files.filter((f) => sel.has(f.id) && f.built).map((f) => f.id);
@@ -378,7 +387,7 @@
   });
   $('bDelete').addEventListener('click', async () => {
     if (!confirm(`Delete ${sel.size} file(s) for good? This cannot be undone.`)) return;
-    after(await post('/api/admin/files/delete', { ids: ids() }), (r) => `${r.count} deleted`);
+    after(await post('/api/admin/files/delete', { ids: ids() }), (r) => `${r.count} deleted` + skippedNote(r));
     sel.clear();
   });
 
@@ -1111,7 +1120,7 @@
       row('Users / profiles', `${d.users} / ${d.profiles}`),
       row('Files by stage', `${st.review || 0} to review · ${st.done || 0} built · ${st.error || 0} failed · ${(st.queued || 0) + (st.processing || 0)} waiting/working`),
       row('At the same time', `${(d.parallel || {}).files || '?'} files, ${(d.parallel || {}).page_procs || '?'} cores each`),
-      row('AI', el('span', {}, el('span', { class: 'chip ' + (d.ai.enabled ? 'ok' : 'warn'), text: d.ai.enabled ? 'on' : 'off' }), ' ', el('span', { class: 'small', text: `${d.ai.base_url || ''} ${d.ai.text_model ? '· ' + d.ai.text_model : ''}` }))),
+      row('Dez AI', el('span', {}, el('span', { class: 'chip ' + (d.ai.enabled ? 'ok' : 'warn'), text: d.ai.enabled ? 'on' : 'off' }), ' ', el('span', { class: 'small', text: `${d.ai.base_url || ''} ${d.ai.text_model ? '· ' + d.ai.text_model : ''}` }))),
       row('Learning', Object.entries(d.learning || {}).map(([k, v]) => `${k.replace('_', ' ')} ${v ? 'on' : 'off'}`).join(' · ')),
       ...loadRows(d, row));
   }
@@ -1123,6 +1132,11 @@
     const waiting = Object.entries(ld.people_waiting || {}).map(([w, n]) => `${w} ${n}`).join(', ');
     return [
       row('In the editor now', people.size ? `${people.size} ${people.size === 1 ? 'person' : 'people'} in ${editing.length} file(s)` : 'nobody'),
+      row('Files held by an editor', (() => {
+        const fl = ld.file_locks || {}, held = Object.values(fl.held || {});
+        if (fl.on === false) return 'the lock is off (Workflow → One person at a time in a file)';
+        return held.length ? `${held.length}: ${[...new Set(held.map((h) => h.user))].join(', ')} · ${fl.refused || 0} change(s) refused so far` : `none · ${fl.refused || 0} change(s) refused so far`;
+      })()),
       row('Files waiting', q.waiting ? `${q.waiting} (${waiting}) · waited ${q.avg_wait_s}s on average, ${q.max_wait_s}s at most` : 'none'),
       row('One PDF at a time', `${mu.requests || 0} requests · ${mu.waited || 0} had to wait (${mu.avg_wait_ms || 0} ms on average, ${mu.max_wait_ms || 0} ms at most) · ${mu.waiting_now || 0} waiting now`),
       row('Learning from edits', `${lv.runs || 0} runs · ${lv.running || 0} now · ${lv.waiting || 0} waiting${lv.failed ? ' · ' + lv.failed + ' failed' : ''}`)];

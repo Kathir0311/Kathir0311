@@ -4,142 +4,81 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="author" content="Kathir — Founder &amp; CEO, Dezquare Tech">
-<meta name="description" content="Dezquare PDF Accessibility Studio — PDF/UA tagging, checking and remediation.">
-<title>Sign in — Dezquare PDF Accessibility Studio</title>
+<meta name="description" content="Dezquare PDF Accessibility Studio — PDF/UA tagging, checking and remediation, with Dez AI: the private AI that tags your files, writes alt text and learns from your team.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%232862e8'/%3E%3Cstop offset='1' stop-color='%237a3cc2'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='43' font-family='Arial,sans-serif' font-size='28' font-weight='700' text-anchor='middle' fill='white'%3EUA%3C/text%3E%3C/svg%3E">
+<title>Sign in — Dezquare PDF Accessibility Studio · Dez AI</title>
+<script>
+// before the first paint: the scripts are on, and the theme the person chose here earlier
+document.documentElement.classList.add('js');
+try { var t = localStorage.getItem('dz-theme'); if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+      if (localStorage.getItem('dz-still') === '1') document.documentElement.classList.add('dz-still'); } catch (e) { /* none */ }
+// if the page's script does not come (blocked, broken), nothing stays hidden waiting for it
+setTimeout(function () { if (!window.__dzOK) document.documentElement.classList.remove('js'); }, 2500);
+</script>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_v }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='landing.css') }}?v={{ asset_v }}">
 </head>
-<body class="loginpage">
-<div class="loginbg" aria-hidden="true"><i></i><i></i><i></i><span class="grid"></span></div>
+<body class="loginpage dz">
+<a class="dz-skip" href="#signin">Skip to sign in</a>
+<canvas id="dzNet" aria-hidden="true"></canvas>
+<div class="dz-glow" aria-hidden="true"><i></i><i></i><i></i></div>
 
-<main class="lg2">
-  <!-- the product, at a glance -->
-  <section class="lghero" aria-label="About the application">
-    <div class="lgbrand"><span class="mark big">UA</span>
-      <div><b>Dezquare</b><div class="small lgsub">PDF Accessibility Studio · v{{ version }}</div></div></div>
-    <h2 class="lgtitle">Accessible PDFs,<br><span class="lggrad">tagged right the first time.</span></h2>
-    <p class="lglead">PDF/UA tagging, checking and remediation — automatic where it can be, by hand where it must be.</p>
-
-    <!-- what the tool does, as a short animated story (V4.21.4) -->
-    <div class="sc" id="sc" aria-roledescription="carousel" aria-label="What the studio does">
-      <div class="scstage">
-        <!-- 1 auto-tag -->
-        <article class="scs on" data-i="0" aria-label="Auto-tag">
-          <div class="scart">
-            <div class="lgpage">
-              <span class="ln h"></span><span class="ln"></span><span class="ln"></span><span class="ln s"></span>
-              <span class="ln li"></span><span class="ln li"></span><span class="ln li s"></span>
-              <span class="tb"><i></i><i></i><i></i><i></i><i></i><i></i></span>
-              <b class="tag t1">H1</b><b class="tag t2">P</b><b class="tag t3">L</b><b class="tag t4">Table</b>
-              <span class="scan"></span>
-            </div>
-            <div class="lgtick">✓ tagged</div>
-          </div>
-          <div class="sctxt"><b>Upload — it tags itself</b>
-            <p>Headings, paragraphs, lists, tables, figures, captions, links and the reading order — proposed in one pass, batch after batch.</p></div>
-        </article>
-        <!-- 2 tables and lists -->
-        <article class="scs" data-i="1" aria-label="Tables and lists">
-          <div class="scart">
-            <div class="scgrid">
-              <i class="th">Group</i><i class="th">Count</i><i class="th">Mean</i>
-              <i>Girls</i><i>38</i><i>3.7</i><i>Adults</i><i>218</i><i>4.3</i>
-              <b class="o o1">1</b><b class="o o2">2</b><b class="o o3">3</b><b class="o o4">4</b><b class="o o5">5</b><b class="o o6">6</b>
-            </div>
-            <div class="sclist"><span><em>1.</em> city <u>Traffic is heavy in the city.</u></span><span><em>2.</em> box <u>The big box was heavy.</u></span><span><em>3.</em> knelt <u>He knelt down.</u></span></div>
-          </div>
-          <div class="sctxt"><b>Tables and lists, fixed visually</b>
-            <p>Merge, split, header cells, reading order by clicking, Shift / Ctrl selection — the picture and the grid side by side.</p></div>
-        </article>
-        <!-- links stage -->
-        <article class="scs" data-i="x1" aria-label="Links stage">
-          <div class="scart">
-            <div class="sclinks">
-              <div class="lk"><span class="w">see Table 3</span><i class="arrow"></i><span class="to">Table 3 · p12</span><b class="ok">✓</b></div>
-              <div class="lk"><span class="w">Chapter 2</span><i class="arrow"></i><span class="to">Chapter 2 · p5</span><b class="ok">✓</b></div>
-              <div class="lk"><span class="w">www.example.com</span><i class="arrow"></i><span class="to">web address</span><b class="ok">✓</b></div>
-              <div class="lk"><span class="w">[14]</span><i class="arrow two"></i><span class="to">Reference 14 ↩</span><b class="ok">✓</b></div>
-            </div>
-          </div>
-          <div class="sctxt"><b>Every link in one place — the Links stage</b>
-            <p>Cross-references, footnotes, contents, figures, tables, references, web and e-mail links found for you, one-way or two-way — checked, fixed and tagged.</p></div>
-        </article>
-        <!-- alt text -->
-        <article class="scs" data-i="x2" aria-label="AI alt text generator">
-          <div class="scart">
-            <div class="scalt">
-              <div class="pic"><svg viewBox="0 0 120 80" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><rect x="0" y="0" width="120" height="80" rx="8" class="sky"/><circle cx="92" cy="20" r="9" class="sun"/>
-                <path d="M0 80 L34 38 L56 62 L78 34 L120 80 Z" class="hill"/></svg><span class="scanl"></span></div>
-              <div class="alttxt"><span class="lbl">Alt text</span><span class="typed">Green hills under a bright sun.</span></div>
-            </div>
-          </div>
-          <div class="sctxt"><b>Alt text, written by AI</b>
-            <p>Every figure gets a draft description from the local AI — decorative ones marked as artifacts — ready for you to check and keep.</p></div>
-        </article>
-        <!-- 3 NVDA -->
-        <article class="scs" data-i="2" aria-label="Hear it like NVDA">
-          <div class="scart">
-            <div class="scsr">
-              <div class="scsrhead"><b>H2</b> heading level 2</div>
-              <div class="scwords"><span>Vowel</span> <span>Digraphs,</span> <span>Diphthongs,</span> <span>and</span> <span>Advanced</span> <span>Vowel</span> <span>Sounds</span></div>
-              <div class="scwave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-            </div>
-          </div>
-          <div class="sctxt"><b>Hear it the way NVDA reads it</b>
-            <p>Say all with the words lit as they are spoken, quick keys, and every problem a listener would trip over — before your client does.</p></div>
-        </article>
-        <!-- 4 checks -->
-        <article class="scs" data-i="3" aria-label="Checked">
-          <div class="scart">
-            <div class="scchk">
-              <div class="scring"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="50" class="bg"/><circle cx="60" cy="60" r="50" class="fg"/></svg><span>PDF/UA</span></div>
-              <ul><li>Tagged content &amp; artifacts</li><li>Headings in order</li><li>Tables with headers</li><li>Alt text &amp; language</li><li>Colour contrast (WCAG)</li></ul>
-            </div>
-          </div>
-          <div class="sctxt"><b>Checked before it ships</b>
-            <p>PDF/UA and WCAG checks with one-click fixes, colour-contrast repair and an Excel report for every file.</p></div>
-        </article>
-        <!-- 5 private, learning, teams -->
-        <article class="scs" data-i="4" aria-label="Private and made for teams">
-          <div class="scart">
-            <div class="scteam">
-              <div class="srv">🔒<b>Your server</b><span>local AI · files never leave</span></div>
-              <div class="flow"><i></i><i></i><i></i></div>
-              <div class="ppl"><span>A</span><span>K</span><span>J</span><span>+</span></div>
-              <div class="learn"><b>Learns your clients</b><span class="bar"><i></i></span></div>
-            </div>
-          </div>
-          <div class="sctxt"><b>Private, learning, made for teams</b>
-            <p>Local AI on your own server, each client's house style learned from approved files, and work given out to your team with roles.</p></div>
-        </article>
-      </div>
-      <div class="scnav" role="tablist" aria-label="Pick a story">
-        <button type="button" class="on" role="tab" aria-label="Auto-tag"><i></i></button>
-        <button type="button" role="tab" aria-label="Tables and lists"><i></i></button>
-        <button type="button" role="tab" aria-label="Links stage"><i></i></button>
-        <button type="button" role="tab" aria-label="AI alt text"><i></i></button>
-        <button type="button" role="tab" aria-label="Hear it like NVDA"><i></i></button>
-        <button type="button" role="tab" aria-label="Checked"><i></i></button>
-        <button type="button" role="tab" aria-label="Private and teams"><i></i></button>
-      </div>
+<!-- ============================================================ navigation -->
+<header class="dz-nav" id="top">
+  <div class="dz-wrap dz-navin">
+    <a class="dz-brand" href="#top" aria-label="Dezquare PDF Accessibility Studio, to the top">
+      <span class="mark big">UA</span>
+      <span><b>Dezquare</b><small>PDF Accessibility Studio</small></span>
+    </a>
+    <nav class="dz-links" aria-label="On this page">
+      <a href="#demo">See it work</a>
+      <a href="#dezai">Dez&nbsp;AI</a>
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#teams">Teams</a>
+      <a href="#privacy">Privacy</a>
+    </nav>
+    <div class="dz-tools">
+      <button type="button" class="dz-icon" id="dzStill" aria-pressed="false" title="Pause the moving pictures" aria-label="Pause the moving pictures">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="p1" d="M8 5v14M16 5v14"/><path class="p2" d="M8 5l11 7-11 7z"/></svg></button>
+      <button type="button" class="dz-icon" id="dzTheme" aria-pressed="false" title="Light or dark" aria-label="Switch between light and dark">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.3M12 19.2v2.3M2.5 12h2.3M19.2 12h2.3M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6"/></svg></button>
+      <a class="dz-btn primary" href="#signin" id="dzNavSign">Sign in</a>
     </div>
+  </div>
+</header>
 
-    <!-- the advantages, running by -->
-    <div class="ticker" aria-label="Advantages">
-      <div class="tickrow">
-        <span>✓ PDF/UA-1</span><span>✓ WCAG 2.1 AA</span><span>⚡ Batch auto-tagging</span><span>🖼 AI alt text generator</span><span>🔗 Links stage</span><span>🧠 Local AI</span><span>🔒 Files stay on your server</span><span>📊 Excel report per file</span><span>🔊 NVDA-style check</span><span>🏷 Client house styles</span><span>👥 Team roles &amp; assignment</span>
-        <span aria-hidden="true">✓ PDF/UA-1</span><span aria-hidden="true">✓ WCAG 2.1 AA</span><span aria-hidden="true">⚡ Batch auto-tagging</span><span aria-hidden="true">🖼 AI alt text generator</span><span aria-hidden="true">🔗 Links stage</span><span aria-hidden="true">🧠 Local AI</span><span aria-hidden="true">🔒 Files stay on your server</span><span aria-hidden="true">📊 Excel report per file</span><span aria-hidden="true">🔊 NVDA-style check</span><span aria-hidden="true">🏷 Client house styles</span><span aria-hidden="true">👥 Team roles &amp; assignment</span>
-      </div>
+<main id="main">
+
+<!-- ============================================================ hero + sign in -->
+<section class="dz-hero dz-wrap" aria-labelledby="dzH1">
+  <div class="dz-copy">
+    <p class="dz-eyebrow reveal"><span class="dot" aria-hidden="true"></span> PDF/UA · WCAG 2.1 AA · <span class="dz-ai"><b>Dez</b><i>AI</i></span> inside</p>
+    <h1 id="dzH1" class="reveal">Accessible PDFs, <span class="dz-grad">tagged right the first time.</span></h1>
+    <p class="dz-say reveal" aria-hidden="true"><span class="dz-ai"><b>Dez</b><i>AI</i></span>
+      <span class="dz-rot" id="dzRot"><span class="on">tags it.</span><span>checks it.</span><span>reads it aloud.</span><span>learns from you.</span></span></p>
+    <p class="sr-only">Dez AI tags it, checks it, reads it aloud and learns from you.</p>
+    <p class="dz-lead reveal">Dezquare PDF Accessibility Studio tags, checks and repairs PDFs for PDF/UA — automatic where it can be, by hand where it must be.
+      Meet <b>Dez AI</b>, the private AI that works inside your team and gets better with every file you correct.</p>
+    <div class="dz-cta reveal">
+      <a class="dz-btn primary lg" href="#signin" id="dzCtaSign">Sign in <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+      <a class="dz-btn ghost lg" href="#demo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg> Watch Dez AI work</a>
     </div>
-  </section>
+    <ul class="dz-chips reveal" aria-label="At a glance">
+      <li>ISO 14289-1 · PDF/UA-1</li><li>WCAG 2.1 AA checks</li><li>Runs on your own server</li><li>Many people at once</li>
+    </ul>
+  </div>
 
   <!-- sign in -->
-  <section class="lgside">
-    <form class="logincard" method="post" action="{{ url_for('login') }}" autocomplete="on" id="lgForm">
-      <div class="lgbrand mob"><span class="mark big">UA</span>
-        <div><b>Dezquare</b><div class="muted small">PDF Accessibility Studio · v{{ version }}</div></div></div>
-      <h1>Welcome back</h1>
-      <p class="muted small">Sign in — your files and the files given to you are waiting.</p>
-      {% if error %}<div class="loginerr" role="alert">⚠ {{ error }}</div>{% endif %}
+  <div class="dz-side reveal" id="signin" tabindex="-1">
+    <form class="dz-card" method="post" action="{{ url_for('login') }}" autocomplete="on" id="lgForm" aria-labelledby="dzSignTitle">
+      <div class="dz-cardhead">
+        <span class="dz-orb mini" aria-hidden="true"><i></i></span>
+        <div><h2 id="dzSignTitle">Welcome back</h2>
+          <p class="muted small">Sign in — your files and the files given to you are waiting.</p></div>
+      </div>
+      {% if error %}<div class="loginerr" role="alert" id="dzErr">⚠ {{ error }}</div>{% endif %}
       {% if fresh and not error %}<div class="logininfo" role="status">🔒 The app was closed, so you were signed out. Please sign in again.</div>{% endif %}
       <label class="lgfield"><span>User name</span>
         <span class="lgin"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>
@@ -153,76 +92,262 @@
       <input type="hidden" name="next" value="{{ next }}">
       <button class="primary wide lgbtn" type="submit" id="lgGo"><span class="lbl">Sign in</span><span class="spin" aria-hidden="true"></span></button>
       <p class="tiny muted lghelp">Forgot your password? Ask your admin to set a new one.</p>
+      <p class="dz-cardfoot tiny"><span class="dz-lockdot" aria-hidden="true"></span>Your files stay on your server. <span class="dz-ai xs"><b>Dez</b><i>AI</i></span> works without the internet.</p>
     </form>
+  </div>
+</section>
 
-    <footer class="lgcredit">
+<!-- ============================================================ the demo -->
+<section class="dz-sec" id="demo" aria-labelledby="dzDemoT">
+  <div class="dz-wrap">
+    <div class="dz-head reveal">
+      <p class="dz-kicker">See it work</p>
+      <h2 id="dzDemoT">Upload a PDF. <span class="dz-grad">Dez AI tags it in one pass.</span></h2>
+      <p class="dz-sub">Headings, paragraphs, lists, tables, figures, captions, links and the reading order — proposed together, checked, and ready for you to review.</p>
+    </div>
+
+    <div class="dz-stage reveal" id="dzStage" data-state="idle">
+      <div class="dz-stagebar" aria-hidden="true">
+        <span class="b r"></span><span class="b y"></span><span class="b g"></span>
+        <span class="title">research-article.pdf</span>
+        <span class="state" id="dzState">ready</span>
+      </div>
+      <div class="dz-stagebody" aria-hidden="true">
+        <!-- the page -->
+        <div class="dz-doc">
+          <div class="dz-page" id="dzPage">
+            <div class="blk b1" data-tag="H1" data-node="Heading 1 · title"><i class="ln w90 h"></i><i class="ln w55 h"></i></div>
+            <div class="blk b2" data-tag="P" data-node="Paragraph · authors"><i class="ln w40 s"></i></div>
+            <div class="blk b3" data-tag="H2" data-node="Heading 2 · Abstract"><i class="ln w28 h2"></i></div>
+            <div class="blk b4" data-tag="P" data-node="Paragraph · 5 lines"><i class="ln"></i><i class="ln"></i><i class="ln"></i><i class="ln"></i><i class="ln w60"></i></div>
+            <div class="blk b5" data-tag="Figure" data-node="Figure · alt text drafted">
+              <svg viewBox="0 0 160 70" preserveAspectRatio="none"><rect width="160" height="70" rx="6" class="sky"/><circle cx="128" cy="18" r="9" class="sun"/><path d="M0 70 L40 30 L66 52 L98 22 L160 70Z" class="hill"/></svg></div>
+            <div class="blk b6" data-tag="Caption" data-node="Caption"><i class="ln w55 s"></i></div>
+            <div class="blk b7" data-tag="Table" data-node="Table · 3 × 3, header row">
+              <span class="cell th"></span><span class="cell th"></span><span class="cell th"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell"></span></div>
+            <div class="blk b8" data-tag="L" data-node="List · 3 items"><i class="ln li"></i><i class="ln li w80"></i><i class="ln li w65"></i></div>
+            <span class="dz-beam"></span>
+          </div>
+          <div class="dz-score" id="dzScore"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="50" class="bg"/><circle cx="60" cy="60" r="50" class="fg"/></svg><span><b>0</b><small>errors</small></span></div>
+        </div>
+        <!-- what Dez AI says and builds -->
+        <div class="dz-panel">
+          <div class="dz-ph"><span class="dz-orb mini live"><i></i></span><b class="dz-ai"><b>Dez</b><i>AI</i></b><span class="st" id="dzStatus">waiting</span></div>
+          <ol class="dz-tree" id="dzTree"></ol>
+          <div class="dz-console" id="dzCon"><span class="cur"></span></div>
+        </div>
+      </div>
+    </div>
+    <p class="sr-only">An illustration: a page of a research article is scanned from top to bottom. Dez AI marks the title as heading 1,
+      the authors and the abstract text as paragraphs, a picture as a figure with a drafted description, a table with its header row,
+      and a list, then shows that the PDF/UA checks end with no errors.</p>
+    <div class="dz-stagectl reveal">
+      <button type="button" class="dz-btn ghost" id="dzReplay"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v4h4"/></svg> Play it again</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ Dez AI -->
+<section class="dz-sec dz-ai-sec" id="dezai" aria-labelledby="dzAiT">
+  <div class="dz-wrap dz-aigrid">
+    <div class="dz-aihero reveal">
+      <div class="dz-orb xl" id="dzOrb" aria-hidden="true">
+        <span class="rg r1"></span><span class="rg r2"></span><span class="rg r3"></span>
+        <span class="core"><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="sat s1">H1</span><span class="sat s2">P</span><span class="sat s3">Table</span><span class="sat s4">Alt</span><span class="sat s5">L</span>
+      </div>
+      <div class="dz-bubble" id="dzBubble" aria-hidden="true"><span class="typed"></span></div>
+    </div>
+    <div class="dz-aitext">
+      <p class="dz-kicker reveal">Our own AI</p>
+      <h2 id="dzAiT" class="reveal">Meet <span class="dz-ai lg"><b>Dez</b><i>AI</i></span> — the AI that lives on your server.</h2>
+      <p class="dz-sub reveal">Dez AI is the studio’s own AI: a local language and vision model together with a self-learning brain that is trained on your approved files.
+        It proposes every tag, drafts every alt text, explains its choice and learns from every correction — and nothing you give it ever leaves your network.</p>
+      <ul class="dz-caps">
+        <li class="reveal spot"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 10h10M4 15h16M4 20h8"/></svg></span>
+          <div><b>Tags a whole file in one pass</b><p>Headings, paragraphs, lists, tables, figures, captions, links, footnotes, contents and reading order — proposed together.</p></div></li>
+        <li class="reveal spot"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M3 16l5-4 4 3 3-2 6 4"/></svg></span>
+          <div><b>Writes the alt text</b><p>A draft description for every picture from the local vision model; decorative ones become artifacts; a picture described once is remembered.</p></div></li>
+        <li class="reveal spot"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3"/></svg></span>
+          <div><b>Learns from your corrections — live</b><p>Change a tag or cut a zone once. A few seconds later Dez AI offers the same fix everywhere in the file and uses it on the next files of that client.</p></div></li>
+        <li class="reveal spot"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg></span>
+          <div><b>Knows each client’s style</b><p>Learns the house rules from approved files — what is a heading, where a paragraph ends — and keeps one convention inside a file.</p></div></li>
+        <li class="reveal spot"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.5"/></svg></span>
+          <div><b>Shows its reasons</b><p>Every proposal says how sure it is and why; the doubtful tags are listed first, so your time goes where it matters.</p></div></li>
+        <li class="reveal spot"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></span>
+          <div><b>Private by design</b><p>Dez AI refuses every connection outside your network. No cloud service, no tracker, no fonts from the internet.</p></div></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ it learns your team's way -->
+<section class="dz-sec dz-learn" id="learn" aria-labelledby="dzLearnT">
+  <div class="dz-wrap dz-learngrid">
+    <div class="dz-learntext">
+      <p class="dz-kicker reveal">Learns live</p>
+      <h2 id="dzLearnT" class="reveal">Correct it once. <span class="dz-grad">Dez AI remembers.</span></h2>
+      <p class="dz-sub reveal">Two paragraphs ended up in one zone? Cut it by hand — one time. Dez AI sees what you changed, offers the same cut at every place in the file
+        that looks alike, and from then on cuts the same way in the next files of that client and of clients that work like it.</p>
+      <ol class="dz-steps3">
+        <li class="reveal" data-s="1"><b>You fix one place</b><span>Draw, cut or join a zone — as you always do.</span></li>
+        <li class="reveal" data-s="2"><b>Dez AI offers the rest</b><span>“9 more places look the same — cut them all?” One click, one undo.</span></li>
+        <li class="reveal" data-s="3"><b>The next file is right</b><span>It must prove itself on files it has not seen before — only then does it act.</span></li>
+      </ol>
+    </div>
+    <div class="dz-zones reveal" id="dzZones" data-step="0" aria-hidden="true">
+      <div class="dz-zpage">
+        <div class="zz z1"><i class="ln"></i><i class="ln"></i><i class="ln w70"></i></div>
+        <div class="zz z2"><i class="ln"></i><i class="ln"></i><i class="ln w55"></i></div>
+        <div class="zbox big"></div>
+        <div class="zbox a"></div><div class="zbox b"></div>
+        <span class="zcut"></span>
+        <svg class="zcur" viewBox="0 0 24 24"><path d="M4 3l14 7-6 2-2 6z"/></svg>
+      </div>
+      <div class="dz-zpage next">
+        <div class="zz z1"><i class="ln"></i><i class="ln"></i><i class="ln w70"></i></div>
+        <div class="zz z2"><i class="ln"></i><i class="ln"></i><i class="ln w55"></i></div>
+        <div class="zbox a"></div><div class="zbox b"></div>
+        <span class="znext">next file ✓</span>
+      </div>
+      <div class="dz-toast" id="dzZoneToast"><span class="dz-orb mini"><i></i></span><div><b>Learned from your zone fix</b><span>9 more places look the same. Cut all 9?</span></div><span class="go">Cut all 9</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ numbers -->
+<section class="dz-sec dz-statsec" aria-label="In numbers">
+  <div class="dz-wrap">
+    <ul class="dz-stats">
+      <li class="reveal"><b><span class="cnt" data-to="300">300</span></b><span>pages tagged in under a minute on a multi-core server</span></li>
+      <li class="reveal"><b><span class="cnt" data-to="4">4</span></b><span>workflow steps: Production, QA, Final QA, Delivery</span></li>
+      <li class="reveal"><b><span class="cnt" data-to="100">100</span>%</b><span>on your own server — local AI, no cloud</span></li>
+      <li class="reveal"><b><span class="cnt" data-to="0">0</span></b><span>files sent outside your network</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ features -->
+<section class="dz-sec" id="features" aria-labelledby="dzFeatT">
+  <div class="dz-wrap">
+    <div class="dz-head reveal">
+      <p class="dz-kicker">Why teams choose it</p>
+      <h2 id="dzFeatT">Everything an accessibility team needs, <span class="dz-grad">in one studio.</span></h2>
+    </div>
+    <ul class="dz-feats">
+      <li class="reveal spot"><span class="ic c1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></span>
+        <h3>PDF/UA and WCAG, checked</h3><p>ISO 14289-1 machine checks on every build, colour-contrast checks with one-click repair, optional veraPDF, and an Excel report for every file.</p></li>
+      <li class="reveal spot"><span class="ic c2"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/></svg></span>
+        <h3>An editor that feels like Acrobat — and is faster</h3><p>Draw a zone and press a key, drag the reading order, merge and split tags, edit tables and lists, undo and redo — with hotkeys for everything.</p></li>
+      <li class="reveal spot"><span class="ic c3"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 11a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 19.7l1-1"/></svg></span>
+        <h3>Links, in one stage</h3><p>Cross-references, footnotes, contents, figures, tables, references, web and e-mail links found for you — one-way or two-way — checked and tagged.</p></li>
+      <li class="reveal spot"><span class="ic c4"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg></span>
+        <h3>Hear it the way NVDA reads it</h3><p>Say-all with the words lit as they are spoken, quick keys, and every problem a listener would trip over — before your client does.</p></li>
+      <li class="reveal spot"><span class="ic c5"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5 14h6l-1 7 8-11h-6z"/></svg></span>
+        <h3>Batch, fast, multi-core</h3><p>Upload files or whole folders and let the queue run: several files at once, every page analysed on all your cores, and everybody served in turn.</p></li>
+      <li class="reveal spot"><span class="ic c6"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4z"/><path d="M3 12l9 4 9-4M3 17l9 4 9-4"/></svg></span>
+        <h3>House styles for every client</h3><p>Profiles per client, learned from their approved files, so a publisher’s books come out the way that publisher wants them — every time.</p></li>
+      <li class="reveal spot"><span class="ic c7"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/></svg></span>
+        <h3>Scanned pages and many languages</h3><p>Optional OCR gives scanned pages a text layer; Unicode text — Tamil, Greek and more — is read, tagged and spoken correctly.</p></li>
+      <li class="reveal spot"><span class="ic c8"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M15 14.5c3 0 6 1.6 6 5.5"/></svg></span>
+        <h3>Made for teams</h3><p>Roles, assignments, due dates, PAC reports, review comments and a history of every step — and one person at a time in a file, so nobody’s work is overwritten.</p></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ how it works -->
+<section class="dz-sec dz-how" id="how" aria-labelledby="dzHowT">
+  <div class="dz-wrap">
+    <div class="dz-head reveal">
+      <p class="dz-kicker">How it works</p>
+      <h2 id="dzHowT">From upload to delivery in <span class="dz-grad">four steps.</span></h2>
+    </div>
+    <ol class="dz-flow" id="dzFlow">
+      <li class="reveal"><span class="n">1</span><b>Upload</b><p>One file, many files or a whole folder. Pick the client’s profile — or let <span class="dz-ai xs"><b>Dez</b><i>AI</i></span> choose by the look of the file.</p></li>
+      <li class="reveal"><span class="n">2</span><b>Dez AI tags it</b><p>The structure, the reading order and the alt texts are proposed in one pass, with a confidence for every tag.</p></li>
+      <li class="reveal"><span class="n">3</span><b>You review and fix</b><p>Look at the doubtful tags first. Every correction teaches Dez AI — live, not at the end of the day.</p></li>
+      <li class="reveal"><span class="n">4</span><b>Build, check, deliver</b><p>The accessible PDF is built, checked against PDF/UA and WCAG, and delivered with its report.</p></li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============================================================ teams -->
+<section class="dz-sec" id="teams" aria-labelledby="dzTeamT">
+  <div class="dz-wrap dz-teamgrid">
+    <div class="dz-teamtext">
+      <p class="dz-kicker reveal">Built for teams</p>
+      <h2 id="dzTeamT" class="reveal">Many people. <span class="dz-grad">One file, one editor at a time.</span></h2>
+      <p class="dz-sub reveal">Work moves from Production to QA, Final QA and Delivery with roles, due dates, PAC reports and review comments.
+        While somebody works in a file, everybody else can open it and look — but nobody can change it, so two people never overwrite each other.</p>
+      <ul class="dz-ticks reveal">
+        <li>Fair queue — one file of each person in turn, urgent files first</li>
+        <li>Live “who is in this file” and “somebody changed it” notices</li>
+        <li>An admin can take a file over; a forgotten tab lets go by itself</li>
+      </ul>
+    </div>
+    <div class="dz-team reveal" id="dzTeam" aria-hidden="true">
+      <ol class="dz-lane"><li class="on">Production</li><li>QA</li><li>Final QA</li><li>Delivery</li></ol>
+      <div class="dz-filecard">
+        <div class="fh"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg><b>annual-report.pdf</b><span class="lk" id="dzLockTag">🔒 Anna is editing</span></div>
+        <div class="people">
+          <span class="p a" id="dzPa"><i>A</i><b>Anna</b><em class="st">editing</em></span>
+          <span class="p"><i>R</i><b>Raj</b><em class="st">view only</em></span>
+          <span class="p"><i>M</i><b>Mei</b><em class="st">view only</em></span>
+        </div>
+        <div class="bars"><i></i><i></i><i></i></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ privacy -->
+<section class="dz-sec dz-privacy" id="privacy" aria-labelledby="dzPrivT">
+  <div class="dz-wrap dz-privgrid">
+    <div class="dz-shield reveal" aria-hidden="true">
+      <svg viewBox="0 0 120 140"><path class="sh" d="M60 8l44 16v38c0 32-19 54-44 70C35 116 16 94 16 62V24z"/><path class="ck" d="M40 66l14 14 28-30"/></svg>
+      <span class="pulse"></span><span class="pulse p2"></span>
+    </div>
+    <div>
+      <p class="dz-kicker reveal">Private by design</p>
+      <h2 id="dzPrivT" class="reveal">Your files stay <span class="dz-grad">yours.</span></h2>
+      <ul class="dz-ticks reveal">
+        <li><span class="dz-ai xs"><b>Dez</b><i>AI</i></span> runs on your own server — a local model, no cloud service</li>
+        <li>Every connection outside your network is refused before a byte is sent, and logged</li>
+        <li>The pages load nothing from the internet: no CDN, no tracker, no web fonts</li>
+        <li>Users, settings and the learning database stay on your machine — with a one-click backup</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ last call -->
+<section class="dz-sec dz-final" aria-labelledby="dzFinalT">
+  <div class="dz-wrap">
+    <div class="dz-finalcard reveal">
+      <h2 id="dzFinalT">Ready when you are.</h2>
+      <p>Sign in and open your files — <span class="dz-ai"><b>Dez</b><i>AI</i></span> has been learning your way of working.</p>
+      <a class="dz-btn primary lg" href="#signin" id="dzFinalSign">Sign in <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="dz-foot">
+  <div class="dz-wrap dz-footin">
+    <div class="lgcredit">
       <div>Application created by <b>Kathir</b><span class="lgrole">Founder &amp; CEO, Dezquare Tech</span></div>
       <div class="lglinks">
         <a href="mailto:info@dezquare.co.in">✉ info@dezquare.co.in</a>
         <a href="https://www.dezquare.co.in" target="_blank" rel="noopener">🌐 www.dezquare.co.in</a>
       </div>
-      <div class="tiny muted">© {{ year }} Dezquare Tech · PDF Accessibility Studio v{{ version }}</div>
-    </footer>
-  </section>
-</main>
+    </div>
+    <div class="tiny muted">© {{ year }} Dezquare Tech · PDF Accessibility Studio v{{ version }} · <span class="dz-ai xs"><b>Dez</b><i>AI</i></span> is the studio’s own AI</div>
+  </div>
+</footer>
 
-<script>
-// the stories turn by themselves; a click, a hover or the keys hold them
-(function () {
-  const sc = document.getElementById('sc');
-  if (!sc) return;
-  const slides = [...sc.querySelectorAll('.scs')];
-  const dots = [...sc.querySelectorAll('.scnav button')];
-  const calm = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let i = 0, timer = null, held = false;
-  const show = (k) => {
-    i = (k + slides.length) % slides.length;
-    slides.forEach((s, j) => { s.classList.toggle('on', j === i); s.setAttribute('aria-hidden', String(j !== i)); });
-    dots.forEach((d, j) => { d.classList.toggle('on', j === i); d.setAttribute('aria-selected', String(j === i)); });
-  };
-  const run = () => { clearInterval(timer); if (!calm) timer = setInterval(() => { if (!held && !document.hidden) show(i + 1); }, 5200); };
-  dots.forEach((d, j) => d.addEventListener('click', () => { show(j); run(); }));
-  sc.addEventListener('mouseenter', () => { held = true; sc.classList.add('held'); });
-  sc.addEventListener('mouseleave', () => { held = false; sc.classList.remove('held'); });
-  sc.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowRight') { show(i + 1); run(); }
-    if (e.key === 'ArrowLeft') { show(i - 1); run(); }
-  });
-  show(0);
-  run();
-})();
-</script>
-<script>
-(function () {
-  const pw = document.getElementById('pw');
-  const eye = document.getElementById('pwShow');
-  eye.addEventListener('click', () => {
-    const show = pw.type === 'password';
-    pw.type = show ? 'text' : 'password';
-    eye.setAttribute('aria-pressed', String(show));
-    eye.setAttribute('aria-label', show ? 'Hide the password' : 'Show the password');
-    eye.title = show ? 'Hide the password' : 'Show the password';
-    eye.classList.toggle('on', show);
-    pw.focus();
-  });
-  const caps = document.getElementById('caps');
-  const capsCheck = (e) => { if (e.getModifierState) caps.hidden = !e.getModifierState('CapsLock'); };
-  pw.addEventListener('keydown', capsCheck);
-  pw.addEventListener('keyup', capsCheck);
-  pw.addEventListener('blur', () => { caps.hidden = true; });
-  // the user name is remembered on this computer (never the password)
-  const un = document.getElementById('un');
-  try { const last = localStorage.getItem('ua-last-user'); if (last && !un.value) { un.value = last; pw.focus(); } } catch (e) { /* none */ }
-  document.getElementById('lgForm').addEventListener('submit', () => {
-    try { localStorage.setItem('ua-last-user', un.value.trim()); } catch (e) { /* none */ }
-    // this tab is signed in (V4.21.4: a sign-in ends when every tab of the app is closed)
-    try { sessionStorage.setItem('ua-tab', Math.random().toString(36).slice(2) + Date.now().toString(36)); } catch (e) { /* none */ }
-    const b = document.getElementById('lgGo');
-    b.classList.add('busy');
-    b.querySelector('.lbl').textContent = 'Signing in…';
-    setTimeout(() => { b.disabled = true; }, 0);
-  });
-})();
-</script>
+<script src="{{ url_for('static', filename='landing.js') }}?v={{ asset_v }}"></script>
 </body>
 </html>

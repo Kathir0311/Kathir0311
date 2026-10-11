@@ -29,16 +29,31 @@ window.UA = (function () {
     if (busyN > 0) busyT = setTimeout(() => bar.classList.add('on'), 140);
     else { bar.classList.remove('on'); bar.classList.add('done'); setTimeout(() => bar.classList.remove('done'), 400); }
   }
+  // V4.29: a file somebody else is working in can be looked at, not changed. The server refuses every change
+  // (423 Locked); in the editor of a person who is only looking, a change is not even asked for.
+  const NOT_A_CHANGE = /\/(lock|wf|work|presence|inventory|brain\/think|actualtext\/suggest)(\/|\?|$)/;
+  let lockToast = 0;
   async function post(url, body) {
+    const ofFile = /^\/api\/job\//.test(url);
+    if (ofFile && !NOT_A_CHANGE.test(url) && document.body.classList.contains('lockedview')) {
+      const why = (window.LOCKSTATE && window.LOCKSTATE.reason) || 'Somebody else is working in this file — you can look at it, not change it.';
+      if (Date.now() - lockToast > 2500) { lockToast = Date.now(); toast(why, 4200); }
+      return { error: why, locked: true };
+    }
     busy(1);
     try {
       const r = await fetch(url, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: ofFile ? { 'Content-Type': 'application/json', 'X-UA-Edit': '1' } : { 'Content-Type': 'application/json' },
         body: JSON.stringify(body || {})
       });
       let d = {};
       try { d = await r.json(); } catch (e) { d = { error: 'server error ' + r.status }; }
       if (!r.ok && !d.error) d.error = 'server error ' + r.status;
+      if (r.status === 423 && d.locked) {            // somebody took the file while this page was open
+        document.body.classList.add('lockedview');
+        window.LOCKSTATE = { ...(window.LOCKSTATE || {}), mine: false, holder: d.by || '', reason: d.error };
+        document.dispatchEvent(new CustomEvent('ua-locked', { detail: d }));
+      }
       return d;
     } finally { busy(-1); }
   }

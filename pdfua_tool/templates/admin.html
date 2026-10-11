@@ -14,7 +14,7 @@
     <button data-tab="workflow" role="tab">Workflow <span class="count" id="wfCount"></span></button>
     <button data-tab="users" role="tab">Users</button>
     <button data-tab="samples" role="tab">Sample files <span class="count" id="sampCount"></span></button>
-    <button data-tab="brain" role="tab">🧠 AI Brain <span class="count" id="brainCount"></span></button>
+    <button data-tab="brain" role="tab">🧠 Dez AI <span class="count" id="brainCount"></span></button>
     <button data-tab="bulk" role="tab">Bulk upload (folder)</button>
     <button data-tab="activity" role="tab">Activity</button>
     <button data-tab="system" role="tab">System</button>
@@ -213,7 +213,7 @@
       <div class="lswitches">
         <label class="switch"><input type="checkbox" data-learn="enabled"><span class="knob"></span><span><b>Use the sample files</b><i>conversion takes the tags the client's samples give</i></span></label>
         <label class="switch"><input type="checkbox" data-learn="auto_approved"><span class="knob"></span><span><b>Approved files teach the tool</b><i>an approved file becomes a sample by itself — its file, tag model, what people changed, its details</i></span></label>
-        <label class="switch"><input type="checkbox" data-learn="use_ai"><span class="knob"></span><span><b>AI with the samples</b><i>what the samples cannot settle goes to the local AI with the client's own examples</i> <span class="chip" id="lAi"></span></span></label>
+        <label class="switch"><input type="checkbox" data-learn="use_ai"><span class="knob"></span><span><b>Dez AI with the samples</b><i>what the samples cannot settle goes to the local AI with the client's own examples</i> <span class="chip" id="lAi"></span></span></label>
         <label class="switch"><input type="checkbox" data-learn="rules"><span class="knob"></span><span><b>Client structure</b><i>captions go where the client's samples put them</i></span></label>
       </div>
       <div class="dbstats" id="lDb"></div>
@@ -232,8 +232,8 @@
   <!-- the self-learning brain (V4.25) -->
   <section class="apane hidden" id="pane-brain">
     <div class="ovhead">
-      <div><h2 class="ovhello">🧠 AI Brain</h2>
-        <p class="tiny muted" id="brSub">The tool's own self-learning AI: it learns from every sample file, every built and approved file, and decides the tags of the next file by itself.</p></div>
+      <div><h2 class="ovhello">🧠 Dez AI</h2>
+        <p class="tiny muted" id="brSub">Dez AI is the tool's own self-learning AI: it learns from every sample file, every built and approved file, and decides the tags of the next file by itself.</p></div>
       <div class="spacer"></div>
       <span class="chip" id="brState">…</span>
       <button class="sm" id="brStudy" title="The local AI (Ollama) reads every sample again and writes each client's tagging rules; the memory gets the embedding model's vectors">✨ AI study of every sample</button>
@@ -253,9 +253,9 @@
     <div class="card learncard">
       <div class="dhead"><h3>Brain settings</h3><div class="spacer"></div><span class="tiny muted" id="brDefault"></span></div>
       <div class="lswitches">
-        <label class="switch"><input type="checkbox" data-learn="brain"><span class="knob"></span><span><b>AI brain decides the tags</b><i>profiles with “AI brain” on (Smart AI, Best quality) let the brain decide every text tag</i></span></label>
+        <label class="switch"><input type="checkbox" data-learn="brain"><span class="knob"></span><span><b>Dez AI decides the tags</b><i>profiles with “AI brain” on (Smart AI, Best quality) let the brain decide every text tag</i></span></label>
         <label class="switch"><input type="checkbox" data-learn="feedback"><span class="knob"></span><span><b>Every built file teaches</b><i>what people change in the tool's proposal is remembered at each build (an approved file counts more)</i></span></label>
-        <label class="switch"><input type="checkbox" data-learn="ai_study"><span class="knob"></span><span><b>AI studies each sample</b><i>the local AI writes the client's tagging rules and the document type for every new sample</i></span></label>
+        <label class="switch"><input type="checkbox" data-learn="ai_study"><span class="knob"></span><span><b>Dez AI studies each sample</b><i>the local AI writes the client's tagging rules and the document type for every new sample</i></span></label>
         <label class="switch"><input type="checkbox" data-learn="zones"><span class="knob"></span><span><b>Learn where zones are cut</b><i>a zone a person cuts in two or joins is learned live; the next files of that client are cut the same way (a model has to be right on pages it was not trained on first)</i></span></label>
       </div>
     </div>
@@ -302,7 +302,7 @@
         <div class="tablewrap"><table class="list" id="brRoles"><thead><tr><th>Tag</th><th>Precision</th><th>Recall</th><th>F1</th><th>Tested</th></tr></thead><tbody></tbody></table></div>
         <div class="tiny muted" id="brDocs"></div></div>
     </div>
-    <div class="card"><div class="dhead"><h3>What the AI learned from the samples</h3><div class="spacer"></div><span class="tiny muted" id="brInsCount"></span></div>
+    <div class="card"><div class="dhead"><h3>What Dez AI learned from the samples</h3><div class="spacer"></div><span class="tiny muted" id="brInsCount"></span></div>
       <div id="brInsights" class="brins"><p class="small muted">Nothing yet.</p></div></div>
     <div class="card"><div class="dhead"><h3>Files the brain learned from</h3></div>
       <div class="tablewrap"><table class="list" id="brHist"><thead><tr><th>When</th><th>File</th><th>Client</th><th>Kind</th><th>Text tags</th><th>Right first time</th><th>Brain's estimate</th></tr></thead><tbody></tbody></table></div></div>

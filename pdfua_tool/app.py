@@ -45,12 +45,13 @@ from core.pipeline import (COLOUR_BACKUP, CONTRAST_BACKUP, save_auto_model, undo
 from core.importer import assess_tags
 from core.textflags import printed_text
 from core.jobrunner import JobFailed, JobStopped, run_task
+from core.editlock import EditLocks, reason as lock_reason
 from core.fairqueue import FairQueue
 from core.locks import FairRLock, replace_file
 from core.preflight import tesseract_info
 from core.report import write_batch_summary
 
-VERSION = "4.28.0"
+VERSION = "4.29.0"
 BASE = os.path.dirname(os.path.abspath(__file__))
 JOBS = os.environ.get("PDFUA_JOBS", os.path.join(BASE, "jobs"))
 CONFIG_PATH = os.environ.get("PDFUA_CONFIG", os.path.join(BASE, "config.json"))
@@ -105,12 +106,67 @@ def wf_cfg() -> dict:
     return {**WF.DEFAULTS, **(load_config().get("workflow") or {})}
 
 
+# ------------------------------------------------ one person at a time in a file (V4.29, core/editlock.py)
+# Whoever opens a file in the editor has it; the others can look, not change. Every request that
+# changes something is checked here, before it reaches its endpoint (423 Locked for anybody else).
+EDITLOCK = EditLocks(ttl=float(os.environ.get("PDFUA_LOCK_TTL", "40") or 40),
+                     idle=60.0 * float(os.environ.get("PDFUA_LOCK_IDLE_MIN", "10") or 10))
+LOCKING_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+_LOCK_CFG = [0.0, True]
+
+
+def lock_enabled() -> bool:
+    """Admin → Workflow → "One person at a time in a file" (on by default); read at most every 2 s."""
+    now = time.time()
+    if now - _LOCK_CFG[0] > 2.0:
+        try:
+            _LOCK_CFG[1] = bool(wf_cfg().get("file_lock", True))
+        except Exception:
+            _LOCK_CFG[1] = True
+        _LOCK_CFG[0] = now
+    return _LOCK_CFG[1]
+
+
+def _same_user(a: str, b: str) -> bool:
+    return (a or "").strip().lower() == (b or "").strip().lower()
+
+
+def lock_view(jid: str) -> dict:
+    """The lock of one file as the person asking sees it."""
+    me = current_user_name()
+    h = EDITLOCK.holder(jid)
+    mine = bool(h and _same_user(h["user"], me))
+    return {"enabled": lock_enabled(), "holder": (h or {}).get("user", ""), "since": (h or {}).get("since", ""),
+            "idle_s": (h or {}).get("idle_s", 0), "mine": mine, "free": h is None,
+            "reason": "" if (h is None or mine) else lock_reason(h), "can_take_over": is_admin(),
+            "idle_limit_s": int(EDITLOCK.idle)}
+
+
+def _lock_gate(jid: str):
+    """A request that changes a file: refused while somebody else works in it."""
+    if not lock_enabled():
+        return None
+    me = current_user_name()
+    h = EDITLOCK.holder(jid)
+    if h is not None and not _same_user(h["user"], me):
+        if request.endpoint == "api_stop" and is_admin():
+            return None                                 # an admin may always stop a job that runs away
+        return jsonify({"error": lock_reason(h), "locked": True, "by": h["user"], "since": h["since"]}), 423
+    if h is not None:
+        EDITLOCK.touch(jid, me)
+    elif request.headers.get("X-UA-Edit") == "1":
+        EDITLOCK.acquire(jid, me)                       # the editor of a person whose lock ran out takes it again
+    return None
+
+
 # what QA and Final QA may not do: upload, analyse, re-analyse, auto-tag,
 # change the profile, delete (V4.23)
 ANALYSE_ENDPOINTS = {"upload", "reanalyze", "api_retag", "api_job_profile", "delete_job", "api_job_samples_apply",
                      "api_answer", "api_job_brain_think"}
 # the steps a file's reader may take without being able to edit it
-WF_OPEN_ENDPOINTS = {"api_job_work", "api_job_wf", "api_job_wf_submit", "api_job_wf_comment"}
+WF_OPEN_ENDPOINTS = {"api_job_work", "api_job_wf", "api_job_wf_submit", "api_job_wf_comment", "api_lock"}
+# V4.29: requests that are not a change of the file (or manage the lock itself): the lock does not hold them back
+LOCK_EXEMPT = WF_OPEN_ENDPOINTS | {"api_job_inventory", "api_job_brain_think", "api_actual_text_suggest"}
 
 
 def _visible_jobs() -> set:
@@ -181,11 +237,21 @@ def _auth():
             if request.method == "POST" and request.endpoint not in WF_OPEN_ENDPOINTS \
                     and not WF.can_edit(meta, g.user):
                 return jsonify({"error": "Read only — " + WF.read_only_reason(meta, g.user), "readonly": True}), 403
+            # one person at a time in a file (V4.29)
+            if request.method in LOCKING_METHODS and request.endpoint not in LOCK_EXEMPT:
+                blocked = _lock_gate(secure_filename(jid))
+                if blocked is not None:
+                    return blocked
             # QA / Final QA correcting a file of the queue: it becomes theirs;
             # production changing a file given to them: it is in progress
             if request.method == "POST" and request.endpoint not in WF_OPEN_ENDPOINTS \
                     and WF.todo_kind(meta, g.user) in ("pick", "start"):
                 _claim(os.path.basename(jid))
+    elif jid and request.method in LOCKING_METHODS and request.endpoint not in LOCK_EXEMPT \
+            and os.path.isdir(os.path.join(JOBS, secure_filename(jid))):
+        blocked = _lock_gate(secure_filename(jid))              # an admin is held back by the lock as well
+        if blocked is not None:
+            return blocked
     return None
 
 
@@ -848,7 +914,8 @@ def editing_now() -> dict[str, list[str]]:
 def load_stats() -> dict:
     """Admin → System: is the one-at-a-time lock, the work queue or the learner a bottleneck?"""
     out: dict = {"mupdf": MUPDF_LOCK.snapshot(), "queue": TASKS.snapshot(), "people_waiting": TASKS.waiting_by(),
-                 "workers": TARGET_FILES, "running": len(RUNNING), "editing": editing_now()}
+                 "workers": TARGET_FILES, "running": len(RUNNING), "editing": editing_now(),
+                 "file_locks": {"on": lock_enabled(), **EDITLOCK.summary(), "held": EDITLOCK.snapshot()}}
     try:
         out["threads"] = threading.active_count()
         out["web_threads"] = int(os.environ.get("PDFUA_THREADS", 0) or 0) or None
@@ -1351,8 +1418,16 @@ def api_answer(jid):
 @app.route("/job/<jid>")
 def editor(jid):
     meta = read_meta(jid)
-    return render_template("editor.html", meta=meta, roles=EDITOR_ROLES,
-                           readonly=WF.read_only_reason(meta, current_user()),
+    ro = WF.read_only_reason(meta, current_user())
+    lock = None
+    if not ro and lock_enabled():                      # V4.29: opening a file to work in it takes it; ?view=1 only looks
+        key = secure_filename(jid)
+        if request.args.get("view") != "1":
+            EDITLOCK.acquire(key, current_user_name())
+        lock = lock_view(key)
+        lock["view_only"] = request.args.get("view") == "1" and not lock["mine"]
+    return render_template("editor.html", meta=meta, roles=EDITOR_ROLES, lock=lock,
+                           readonly=ro,
                            artifact_types=ARTIFACT_TYPES, pagination=PAGINATION_SUBTYPES,
                            numbering=LIST_NUMBERING, env=env_status(), cfg=load_config(),
                            client_only=CLIENT_ONLY,
@@ -1368,6 +1443,7 @@ def delete_job(jid):
     log_action("deleted", jid, meta.get("filename", ""))
     _stop(jid, wait=True)
     shutil.rmtree(job_dir(jid), ignore_errors=True)
+    EDITLOCK.release(secure_filename(jid), force=True)
     return redirect(url_for("index"))
 
 
@@ -1463,6 +1539,7 @@ def _page_doc(jid: str) -> pymupdf.Document:
 def api_jobs():
     batch = request.args.get("batch")
     waiting = [j for j, _ in list(TASKS.queue) if j not in STOP]
+    locks = EDITLOCK.snapshot() if lock_enabled() else {}
     out = []
     for m in list_jobs(5000 if is_admin() else 1000, visible=True):
         if batch and m.get("batch") != batch:
@@ -1476,6 +1553,9 @@ def api_jobs():
         d.update(WF.summary(m))
         d["can_edit"] = WF.can_edit(m, current_user())
         d["todo"] = WF.todo_kind(m, current_user())
+        h = locks.get(secure_filename(m.get("id") or ""))
+        if h:
+            d["locked_by"], d["lock_mine"] = h["user"], _same_user(h["user"], current_user_name())
         if m.get("id") in waiting:
             d["position"] = waiting.index(m["id"]) + 1
         out.append(d)
@@ -1623,6 +1703,38 @@ def api_model(jid):
                     "can_undo": bool(_stack(jid, "undo")), "can_redo": bool(_stack(jid, "redo")), "rev": rev})
 
 
+@app.route("/api/job/<jid>/lock", methods=["GET", "POST"])
+def api_lock(jid):
+    """One person at a time in a file (V4.29). GET: who has it. POST: acquire (take it, or renew),
+    release (let go), takeover (an admin takes it from whoever has it)."""
+    job_dir(jid)
+    jid = secure_filename(jid)
+    if request.method == "GET":
+        return jsonify({"ok": True, **lock_view(jid)})
+    meta = read_meta(jid)
+    me, me_name = current_user(), current_user_name()
+    act = str((request.get_json(silent=True) or {}).get("action") or "")
+    can = lock_enabled() and (WF.can_edit(meta, me) or is_admin())
+    if act == "release":
+        EDITLOCK.release(jid, me_name)
+    elif act == "acquire":
+        if not can:
+            return jsonify({"ok": False, "error": WF.read_only_reason(meta, me) or "the lock is off", **lock_view(jid)})
+        ok, h = EDITLOCK.acquire(jid, me_name)
+        if not ok:
+            return jsonify({"ok": False, "error": lock_reason(h), **lock_view(jid)})
+    elif act == "takeover":
+        if not is_admin():
+            return _err("only an admin takes a file over", 403)
+        before = EDITLOCK.holder(jid)
+        EDITLOCK.acquire(jid, me_name, force=True)
+        if before and not _same_user(before["user"], me_name):
+            log_action("took the file over", jid, meta.get("filename", ""), f"from {before['user']}")
+    else:
+        return _err("unknown step")
+    return jsonify({"ok": True, **lock_view(jid)})
+
+
 @app.route("/api/job/<jid>/presence")
 def api_presence(jid):
     """Who else has this file open, and has anybody changed the tags since the editor loaded them? (V4.28)"""
@@ -1640,8 +1752,13 @@ def api_presence(jid):
         meta = read_meta(jid)
     except Exception:
         meta = {}
+    lock = None
+    if lock_enabled() and not WF.read_only_reason(meta, current_user()):
+        if request.args.get("hold") == "1":              # the editor of the person who has the file: "I am still here"
+            EDITLOCK.renew(jid, me, active=request.args.get("active") == "1")
+        lock = lock_view(jid)
     return jsonify({"rev": rev, "here": here, "changed": bool(mine) and bool(rev) and mine != rev,
-                    "by": meta.get("edited_by") or "", "at": meta.get("edited") or "", "me": me})
+                    "by": meta.get("edited_by") or "", "at": meta.get("edited") or "", "me": me, "lock": lock})
 
 
 @app.route("/job/<jid>/page/<int:pno>.png")
@@ -3985,7 +4102,33 @@ def api_admin_overview():
 
 @app.route("/api/admin/files")
 def api_admin_files():
-    return jsonify([_job_row(m) for m in list_jobs(100000)])
+    locks = EDITLOCK.snapshot() if lock_enabled() else {}
+    rows = [_job_row(m) for m in list_jobs(100000)]
+    for r in rows:
+        h = locks.get(secure_filename(r.get("id") or ""))
+        if h:
+            r["locked_by"], r["lock_idle_s"] = h["user"], h["idle_s"]
+    return jsonify(rows)
+
+
+@app.route("/api/admin/files/unlock", methods=["POST"])
+def api_admin_unlock():
+    """Let go of the files nobody should hold any more (a person went home without closing the editor)."""
+    n = 0
+    for i in _ids(request.get_json(force=True) or {}):
+        before = EDITLOCK.holder(secure_filename(i))
+        if EDITLOCK.release(secure_filename(i), force=True):
+            n += 1
+            log_action("unlocked the file", i, "", f"was held by {before['user']}" if before else "")
+    return jsonify({"ok": True, "unlocked": n})
+
+
+def _held_by_other(i: str) -> str:
+    """Who else has the file open for work ("" when nobody): the admin's steps for many files leave it alone (V4.29)."""
+    if not lock_enabled():
+        return ""
+    h = EDITLOCK.holder(secure_filename(i))
+    return h["user"] if h and not _same_user(h["user"], current_user_name()) else ""
 
 
 def _ids(b: dict) -> list[str]:
@@ -4108,46 +4251,61 @@ def api_admin_update():
 @app.route("/api/admin/files/delete", methods=["POST"])
 def api_admin_delete():
     ids = _ids(request.get_json(force=True) or {})
+    done, skipped = 0, []
     for i in ids:
         meta = read_meta(i)
+        who = _held_by_other(i)
+        if who:
+            skipped.append(f"{meta.get('filename', i)} ({who} is working in it)")
+            continue
         _stop(i, wait=True)
         shutil.rmtree(job_dir(i), ignore_errors=True)
+        EDITLOCK.release(secure_filename(i), force=True)
         log_action("deleted", i, meta.get("filename", ""))
-    return jsonify({"ok": True, "count": len(ids)})
+        done += 1
+    return jsonify({"ok": True, "count": done, "skipped": skipped})
 
 
 @app.route("/api/admin/files/reanalyze", methods=["POST"])
 def api_admin_reanalyze():
     ids = _ids(request.get_json(force=True) or {})
-    started, busy = 0, 0
+    started, busy, skipped = 0, 0, []
     for i in ids:
         meta = read_meta(i)
         if meta.get("stage") in ("queued", "processing", "building"):
             busy += 1
+            continue
+        who = _held_by_other(i)
+        if who:
+            skipped.append(f"{meta.get('filename', i)} ({who} is working in it)")
             continue
         update_meta(i, stage="queued", progress=0, message="waiting", built=False, error="", build_error="",
                     dirty=False, reanalysed=datetime.now().isoformat(timespec="seconds"))
         TASKS.put((i, "prepare"))
         started += 1
         log_action("re-analysed", i, meta.get("filename", ""))
-    return jsonify({"ok": True, "started": started, "busy": busy})
+    return jsonify({"ok": True, "started": started, "busy": busy, "skipped": skipped})
 
 
 @app.route("/api/admin/files/build", methods=["POST"])
 def api_admin_build():
     """Build the accessible PDF of many files at once (each with its own options)."""
     ids = _ids(request.get_json(force=True) or {})
-    started = 0
+    started, skipped = 0, []
     for i in ids:
         meta = read_meta(i)
         if meta.get("stage") not in ("review", "done") or not os.path.exists(os.path.join(job_dir(i), "model.json")):
+            continue
+        who = _held_by_other(i)
+        if who:
+            skipped.append(f"{meta.get('filename', i)} ({who} is working in it)")
             continue
         STOP.discard(i)
         update_meta(i, stage="building", progress=0, message="waiting to build")
         TASKS.put((i, "build"))
         started += 1
         log_action("build started", i, meta.get("filename", ""))
-    return jsonify({"ok": True, "started": started})
+    return jsonify({"ok": True, "started": started, "skipped": skipped})
 
 
 @app.route("/api/admin/files/download.zip")
@@ -4437,8 +4595,12 @@ def api_admin_files_profile():
     ids = _ids(b)
     if not ids:
         return _err("tick the files first")
-    done, busy, err = 0, 0, ""
+    done, busy, err, skipped = 0, 0, "", []
     for i in ids:
+        who = _held_by_other(i)
+        if who:
+            skipped.append(f"{read_meta(i).get('filename', i)} ({who} is working in it)")
+            continue
         r = _change_profile(i, str(b.get("profile") or ""), bool(b.get("reanalyse", True)))
         if r.get("ok"):
             done += 1
@@ -4448,7 +4610,7 @@ def api_admin_files_profile():
             err = r.get("error", "")
     if not done and err:
         return _err(err)
-    return jsonify({"ok": True, "changed": done, "busy": busy})
+    return jsonify({"ok": True, "changed": done, "busy": busy, "skipped": skipped})
 
 
 # ================================================================ sample files (V4.20)
@@ -4657,6 +4819,7 @@ def _learn_from_approved(jid: str) -> str:
 def _work_changed(jid: str, work: str) -> str:
     """Approved (Delivery) → the file teaches the tool; sent back to
     production or to a check again → it stops until it is approved again."""
+    EDITLOCK.release(secure_filename(jid), force=True)          # V4.29: the file moved on, the person who had it is done
     try:
         if work == "approved":
             return _learn_from_approved(jid)

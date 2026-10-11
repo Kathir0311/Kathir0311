@@ -14,7 +14,7 @@ ROOT = __file__.rsplit("/tests/", 1)[0]
 def main():
     errors = []
     with sync_playwright() as p:
-        br = p.chromium.launch()
+        br = p.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
         pg = br.new_page(viewport={"width": 1500, "height": 950})
         pg.on("console", lambda m: errors.append(f"console.{m.type}: {m.text}") if m.type == "error" else None)
         pg.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))

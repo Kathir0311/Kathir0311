@@ -24,7 +24,7 @@ PASS = os.environ.get("PDFUA_TEST_PASS", "Kathir@051408")
 def main() -> int:
     bad, errs = [], []
     with sync_playwright() as p:
-        br = p.chromium.launch()
+        br = p.chromium.launch(executable_path=os.environ.get("PW_CHROMIUM") or None)
         ctx = br.new_context()
         p1 = ctx.new_page()
         p1.on("pageerror", lambda e: errs.append(str(e)))

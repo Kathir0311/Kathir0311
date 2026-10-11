@@ -1,4 +1,4 @@
-# Dezquare PDF Accessibility Studio v4.28.0
+# Dezquare PDF Accessibility Studio v4.29.0
 
 Automated PDF/UA-1 tagging plus an Acrobat-style manual tag editor.
 
@@ -1378,6 +1378,11 @@ python tests/selfimprove_test.py       # V4.27.0 honest probabilities (calibrati
 python tests/zonelearn_test.py         # V4.28.0 where zones are cut, learned from what people change: per client, for everybody, the parallel analysis decides the same
 python tests/zonelearn_app_test.py     # V4.28.0 one cut by hand → the same cut offered elsewhere in the file → learned live by a learner process → approved → the next file is right
 python tests/multiuser_test.py         # V4.28.0 many people at once: the lock, the fair queue, config.json, who else is in the file, no lost change (PDFUA_LOCK_AUDIT=1)
+python tests/filelock_test.py          # V4.29.0 one person at a time in a file: the others look, every change is refused (423), take over, let go, expiry, the switch
+python app.py & python tests/ui_front_test.py    # V4.29.0 the front page in a browser: the demo, the moving parts and their pause, light / dark, a phone, signing in
+python app.py & python tests/ui_lock_test.py     # V4.29.0 two people, one file, in two browsers: view only, take over, let go, leaving
+python app.py & python tests/ui_zone_test.py     # V4.28.0 a zone cut by hand → the offer “Cut all N”, Admin → System and Dez AI
+                                                 # (the browser tests take a Chromium you already have from PW_CHROMIUM=/path/to/chromium)
 python app.py & python tests/api_test.py && python tests/ui_test.py /tmp
 ```
 
@@ -1417,6 +1422,7 @@ core/zonelearn.py   where a zone is cut or joined, learned from what people chan
 core/livelearn.py   the learner process: what people changed in a file, learned a few seconds later (V4.28)
 core/locks.py       the one-at-a-time lock that serves the waiting in the order they came (V4.28)
 core/fairqueue.py   the work queue that serves each person in turn (V4.28)
+core/editlock.py    one person at a time in a file — the others look (V4.29)
 core/inventory.py   everything in the PDF, and what no tag holds (V4.26)
 core/kb.py          the offline rule book (V4.26)
 core/netguard.py    the privacy guard: nothing leaves the server (V4.26)
@@ -2583,3 +2589,70 @@ applied, undone, redone → learned by the learner process → built, the tags s
 admin switch) and `tests/multiuser_test.py` (the lock, the queue, `config.json`, ten people at once with two in one file and no
 lost change, the lock audit, who is in the file, undo of somebody else's change). `api_test.py` and `ui_test.py` run through
 against a running server (waitress), and the chip, the bar, the offer and Admin → System were rendered in a browser.
+
+
+**V4.29.0 — One person at a time in a file, a front page that shows what the studio can do, and Dez AI.**
+
+*1. One person at a time in a file (`core/editlock.py`).* While somebody works in a file nobody else may change it. The others
+can open it and **look** — the tags, the pages, the issues, the Reader, the PDF data — and every change is refused.
+* **Who has the file.** Whoever opens a file in the editor (or presses *Edit this file* in a file they were only looking at).
+  The header shows **🔒 You are editing**; for everybody else **👁 View only · Anna**, a bar says “Anna is working on this file
+  now — you can look at it, not change it.”, the tools that change something (Build, Undo, Draw, Re-analyse, the AI helpers,
+  the inspector's fields …) are gone or dimmed, and a hotkey that would change a tag says why it does nothing. The editor of
+  somebody who only looks shows the other person's changes by itself, a moment after they are made.
+* **Enforced by the server**, not only by the page: every request that changes a file (a role, a move, undo, a build, a zone, an
+  AI draft, re-analyse, a new profile, delete …) is answered **423 Locked** with `{"locked": true, "by": "Anna"}` for anybody
+  else — the editor, a script, an admin. Reading, the pictures, the lint, the Reader and the PDF data are never held back.
+* **How long it lasts.** It is kept while the editor is open (the editor says “I am still here” with every look at who is in
+  the file, every 6 s). It ends when the person **leaves** (the editor lets go — also when the tab is closed), when the editor
+  has said nothing for **40 s** (a closed laptop, a lost connection), when the person has **done nothing in the file for 10
+  minutes** (a tab left open over lunch — *Edit this file* takes it again), when the file **moves on in the workflow** (sent to
+  QA, approved …), or when an **admin** takes it (**Take over**, with a question first; the person who had it is told and
+  can look) or unlocks it (Admin → Files: the 🔒 badge of a file — click it).
+* **Looking only.** The file list opens a file somebody has as a view (`/job/<id>?view=1`, which takes nothing); so does a link
+  with `?view=1`. A person who opens a file normally has it, so that the one who comes to work is not overwritten.
+* **Scripts** that never open the editor take no lock (and are refused while somebody else has the file). A refused change is
+  HTTP 423, a lock that is simply free is taken by the editor of a person who works on.
+* **Admin → Workflow → “One person at a time in a file”** (on by default) switches it off for everybody; environment
+  `PDFUA_LOCK_IDLE_MIN` (10) and `PDFUA_LOCK_TTL` (40). Admin → System shows how many files are held and by whom.
+* The file list and Admin → Files show who has a file. Undo still asks first when somebody else made the last change.
+
+*2. A front page that shows what the studio can do.* The sign-in page is now the studio's front door: the sign-in beside a
+headline; **an animated demo** in which Dez AI tags a page (a beam runs down it, every block gets its tag, the tag tree builds
+up, the console says what it finds, the PDF/UA check ends with 0 errors); **“Meet Dez AI”**, its orb, its speech bubble and what
+it does; **the zone-learning story** (cut a zone once → “9 more places look the same” → the next file is right); the numbers; eight
+reasons to choose the studio; how it works in four steps; the teams (the lane from Production to Delivery, and the lock passing from
+person to person); privacy; a last call. It is all drawn by `static/landing.js` and `static/landing.css`: a net of tags drifting in
+the background, words that turn, numbers that count up, parts that come up as they are scrolled to, cards the pointer lights, a
+**light / dark** button (and the computer's own choice), and a **pause** button that stops everything that moves and shows how
+each picture ends (kept for the next visit; the computer's “less motion” setting does the same). Nothing is loaded from the
+internet (the pages' Content-Security-Policy is unchanged). Accessible, as the studio should be: one `h1`, landmarks, a skip
+link, labels on every field, the moving pictures are hidden from screen readers and described once in words, text on
+coloured backgrounds keeps its contrast, and on a phone the sign-in comes first. The form is the old one (user name, password with
+its eye, Caps Lock notice, the remembered user name — never the password — and the tab guard of V4.21.4).
+
+*3. Dez AI.* The studio's own AI now has a name: **Dez AI** — a local language and vision model (Ollama, on your own server)
+together with the self-learning brain that is trained on your approved files and learns from every correction, live. It proposes
+the tags, drafts the alt texts, shows how sure it is and why, learns each client's way, and sends nothing out of your network.
+The name is used where the AI is: the editor's **Dez AI** button and its helpers, Admin → **🧠 Dez AI**, Settings, the file
+list (“Dez AI: on”) — where a **tip strip** gives one useful thing at a time. (Option names, the engine's notes in the tags and the
+files are unchanged.)
+
+Also: the app has an inline icon (no more request for a `favicon.ico` that does not exist).
+
+*Honest limits.* The lock keeps people from overwriting each other in the tags and builds of one file; it is **not** a login
+or an access right (who may see a file is still decided by roles and assignments), and the admin's file management — priority,
+assignment, due date — and the workflow's own steps keep their own rules. It lives in the server's memory (one process): after a
+restart the editors that are open take their files again as soon as their person does something. A person who opens a file to
+work and then leaves the tab open holds it for up to 10 minutes of idleness — the *view only* link and the admin's *Take over*
+are there for that. The front page's numbers (“300 pages in under a minute”) are the figure this README gives for its multi-core
+test (“Current results”), not a promise for every machine; the demo and the zone story are illustrations, not a recording.
+Dez AI is only as good as the local model installed and the files it has seen.
+
+Checked: every test suite of V4.28 passes as it was; new `tests/filelock_test.py` (the lock, and through the app: the view, the
+423s on eleven kinds of change, reading never held back, take over, let go, the editor's and the file list's information, the
+workflow letting go, the idle and silent ends, the switch), `tests/ui_front_test.py` (the page whole, the demo reaching its end, the
+zone story, the lane, the numbers, the words, the pause kept, light / dark, less motion, a phone, signing in right and wrong, nothing
+from another server) and `tests/ui_lock_test.py` (two admins in two browsers: view only, the refused hotkey, the file list, take over
+seen by the other, the change of the one who works shown to the one who looks, let go, leaving). `api_test.py` and `ui_test.py` run
+through against a running server.

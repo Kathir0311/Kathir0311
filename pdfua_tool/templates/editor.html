@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block bodyclass %}editorpage{% if readonly %} readonly{% endif %}{% endblock %}
+{% block bodyclass %}editorpage{% if readonly %} readonly{% endif %}{% if lock and not lock.mine %} lockedview{% endif %}{% endblock %}
 {% block title %}{{ meta.filename }} — Tag editor{% endblock %}
 
 {% block headerextra %}
@@ -13,13 +13,14 @@
   </div>
   {% endif %}
   <div class="spacer"></div>
+  <button type="button" class="lockchip hidden" id="lockChip"></button>
   <span class="herechip hidden" id="hereChip" tabindex="0"></span>
   <span class="workchip hidden" id="workChip" tabindex="0"></span>
   <button id="undoBtn" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
   <button id="redoBtn" title="Redo (Ctrl+Shift+Z)" disabled>↷ Redo</button>
   <button id="nextIssueBtn" title="Next issue (.)">Next issue</button>
   <button id="previewBtn" title="What a screen reader will read">Preview</button>
-  <button id="aiBtn" title="Local AI helpers">AI</button>
+  <button id="aiBtn" title="Dez AI — the helpers that run on this server">Dez AI</button>
   <button class="primary" id="buildBtn">Build PDF</button>
 {% endblock %}
 
@@ -465,8 +466,8 @@
 
 <dialog id="aiDlg">
   <div class="dlg">
-    <h3>Local AI helpers</h3>
-    <p class="muted small">Uses the Ollama server set in Settings. Suggestions are drafts — review each one.</p>
+    <h3>Dez AI helpers</h3>
+    <p class="muted small">Dez AI runs on the Ollama server set in Settings — nothing leaves your server. Suggestions are drafts — review each one.</p>
     <div class="btnrow">
       <button id="aiAltAll">Draft alt text for every figure without one</button>
       <button id="aiRoles">Review tag roles</button>
@@ -582,7 +583,7 @@
   window.META = {{ {'stage': meta.stage, 'built': meta.built, 'mode': meta.mode, 'link_direction': opts.link_direction, 'profile': meta.get('profile') or ''}|tojson }};
 </script>
 {% endif %}
-<script>window.JOB = window.JOB || {{ meta.id|tojson }}; window.BUSY = {{ busy|tojson }}; window.READONLY = {{ readonly|tojson }};</script>
+<script>window.JOB = window.JOB || {{ meta.id|tojson }}; window.BUSY = {{ busy|tojson }}; window.READONLY = {{ readonly|tojson }}; window.LOCK = {{ lock|tojson }};</script>
 {% endblock %}
 
 {% block scripts %}<script src="{{ url_for('static', filename='editor.js') }}?v={{ asset_v }}"></script>

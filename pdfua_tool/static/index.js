@@ -172,7 +172,7 @@
       const todo = { start: 'Start', work: 'Continue', rework: 'Fix the rework', pick: 'Check ▸', check: 'Continue checking', deliver: 'Deliver' }[j.todo];
       tr.innerHTML = `
         <td class="xcell"><button class="sm xbtn" type="button" data-id="${j.id}" aria-expanded="${open.has(j.id)}" title="Details">▸</button></td>
-        <td><a href="/job/${j.id}${qa ? '#review' : ''}">${UA.esc(j.filename)}</a><div class="tiny muted">${UA.esc((j.created || '').replace('T', ' '))}${j.title ? ' · ' + UA.esc(j.title.slice(0, 60)) : ''}</div></td>
+        <td><a href="/job/${j.id}${j.locked_by && !j.lock_mine ? '?view=1' : ''}${qa ? '#review' : ''}"${j.locked_by && !j.lock_mine ? ` title="${UA.esc(j.locked_by)} is working on this file — you can look at it, not change it"` : ''}>${UA.esc(j.filename)}</a>${j.locked_by ? `<span class="lockbadge" title="${j.lock_mine ? 'You have this file open' : UA.esc(j.locked_by) + ' is working on this file now — you can look, not change'}">🔒 ${j.lock_mine ? 'you' : UA.esc(j.locked_by)}</span>` : ''}<div class="tiny muted">${UA.esc((j.created || '').replace('T', ' '))}${j.title ? ' · ' + UA.esc(j.title.slice(0, 60)) : ''}</div></td>
         <td class="stepcell" data-step="${j.id}"></td>
         <td><button type="button" class="pchip pbtn" data-prof="${j.id}" data-fn="${UA.esc(j.filename)}" title="Change the profile of this file"${busy || !window.CAN_UPLOAD ? ' disabled' : ''}>${UA.esc(j.profile || 'Default')}</button>${who}${j.priority && j.priority !== 'normal' ? `<span class="prio p-${UA.esc(j.priority)}">${UA.esc(j.priority)}</span>` : ''}${j.due ? `<div class="tiny muted">due ${UA.esc(j.due)}</div>` : ''}</td>
         <td>${j.pages || ''}</td><td>${UA.esc(j.mode || '')}</td><td>${errs}</td><td>${status}</td>
@@ -182,7 +182,7 @@
           ${qa ? `<a class="btn sm" href="/job/${j.id}/download/original" title="The PDF as it came in">Input PDF</a>` : ''}
           ${j.built ? `<a class="btn sm" href="/job/${j.id}/download/pdf" title="The accessible PDF">${qa ? 'Output PDF' : 'PDF'}</a> <a class="btn sm" href="/job/${j.id}/download/report">Report</a>` : ''}
           ${canRean ? `<button class="sm reanbtn" type="button" data-id="${j.id}" title="Analyse the whole file again, like at upload (replaces all tags)">Re-analyse</button>` : ''}
-          ${window.CAN_UPLOAD && (window.IS_ADMIN || (j.owner || '').toLowerCase() === (window.ME || '').toLowerCase()) ? `<form method="post" action="/job/${j.id}/delete" class="inline" onsubmit="return confirm('Delete this job?')"><button class="sm danger">Delete</button></form>` : ''}
+          ${window.CAN_UPLOAD && (window.IS_ADMIN || (j.owner || '').toLowerCase() === (window.ME || '').toLowerCase()) ? `<form method="post" action="/job/${j.id}/delete" class="inline"><button class="sm danger">Delete</button></form>` : ''}
         </td>`;
       const sc = tr.querySelector('.stepcell');
       if (W) {
@@ -216,8 +216,17 @@
     tb.querySelectorAll('.stopbtn').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('Stop this file?')) return;
       b.disabled = true;
-      await UA.post('/api/job/' + b.dataset.id + '/stop');
+      const r = await UA.post('/api/job/' + b.dataset.id + '/stop');
+      if (r && r.error) UA.toast(r.error, 4500);
       setTimeout(refresh, 500);
+    }));
+    // delete: asks first; a file somebody works in is refused (423) with the name — a message, not a page of JSON
+    tb.querySelectorAll('form.inline[action$="/delete"]').forEach((f) => f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!confirm('Delete this job?')) return;
+      const r = await fetch(f.action, { method: 'POST', headers: { 'X-Requested-With': 'fetch' } });
+      if (r.status === 423 || r.status === 403) { const d = await r.json().catch(() => ({})); alert(d.error || 'This file cannot be deleted now.'); return; }
+      refresh();
     }));
   }
 
@@ -372,4 +381,34 @@
   if (window.WFQ) fillQ(window.WFQ);
   document.querySelectorAll('.qtile').forEach((t) => t.addEventListener('click', () => { wfView = 'mine'; render(); wfBar(); }));
   refresh();
+})();
+
+// V4.29 — Dez AI on the file list: a tip at a time (never while the pointer is on it, never with "less motion")
+(function () {
+  const box = document.getElementById('dzSay');
+  if (!box) return;
+  const tips = [
+    'Draw a zone, press a key — the tag is made. Press <kbd>D</kbd>, drag over the text, then <kbd>P</kbd>.',
+    'Cut a zone once. I offer the same cut at every place in the file that looks alike — one click, one undo.',
+    'Start with the doubtful tags: the Client tab lists them first, the ones my answer would teach most on top.',
+    'I learn from every correction a few seconds after you make it — not only when you build.',
+    'While somebody works in a file, everybody else can look at it but not change it. Nobody is overwritten.',
+    '<kbd>Ctrl</kbd>+<kbd>Z</kbd> takes back the last change — even a whole “Cut all”.',
+    'A picture I described once is remembered: the next file gets the same alt text, before I am asked.',
+    'Everything runs on this server. I never phone home.'];
+  const calm = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let i = 0, held = false;
+  const strip = document.getElementById('dzStrip');
+  strip.addEventListener('mouseenter', () => { held = true; });
+  strip.addEventListener('mouseleave', () => { held = false; });
+  strip.addEventListener('focusin', () => { held = true; });
+  strip.addEventListener('focusout', () => { held = false; });
+  i = Math.floor(Math.random() * tips.length);
+  box.innerHTML = tips[i];
+  if (calm) return;
+  setInterval(() => {
+    if (held || document.hidden) return;
+    box.classList.add('out');
+    setTimeout(() => { i = (i + 1) % tips.length; box.innerHTML = tips[i]; box.classList.remove('out'); }, 360);
+  }, 9000);
 })();

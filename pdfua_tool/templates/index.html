@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 {% block body %}
 <div class="wrap">
+  <!-- Dez AI, the studio's own AI: a tip at a time (V4.29) -->
+  <section class="dzstrip" id="dzStrip" aria-label="Dez AI">
+    <span class="dzorb" aria-hidden="true"><i></i></span>
+    <div class="dzmsg">
+      <b class="dzname">Dez <i>AI</i></b>
+      <span class="dzsay" id="dzSay">Draw a zone, press a key — the tag is made. Press <kbd>D</kbd>, drag over the text, then <kbd>P</kbd>.</span>
+    </div>
+    <span class="dzstate {{ 'on' if env.ai_enabled else '' }}" title="Dez AI is the studio's own AI: a local model (Ollama) and a self-learning brain. Nothing leaves this server.">{{ 'ready' if env.ai_enabled else 'brain only' }}</span>
+  </section>
   {% if not can_upload %}
   <section class="card qahero" id="qaHero">
     <div class="qahead">
@@ -67,7 +76,7 @@
     <div class="envrow">
       <span class="chip {{ 'ok' if env.tesseract else 'warn' }}">OCR: {{ ('Tesseract ' ~ env.tess_langs|join(', ')) if env.tesseract else 'Tesseract not found' }}</span>
       <span class="chip {{ 'ok' if env.verapdf else 'warn' }}">veraPDF: {{ 'ready' if env.verapdf else 'not configured' }}</span>
-      <span class="chip {{ 'ok' if env.ai_enabled else '' }}">AI: {{ 'Ollama enabled' if env.ai_enabled else 'off' }}</span>
+      <span class="chip {{ 'ok' if env.ai_enabled else '' }}" title="Dez AI is the studio's own AI: a local model (Ollama) and a self-learning brain">Dez AI: {{ 'on' if env.ai_enabled else 'off' }}</span>
       <span class="chip">v{{ env.version }}</span>
     </div>
   </section>
