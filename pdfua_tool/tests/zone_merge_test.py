@@ -20,7 +20,7 @@ from core.ai import AIConfig                        # noqa: E402
 from core.analyzer import analyze                   # noqa: E402
 from core.options import Options                    # noqa: E402
 
-PORT = 11497
+PORT = 11572
 HEAD = ["Skill", "Task", "Score"]
 ROWS = [[f"Set {i}", "A", "/10"] for i in range(1, 10)]
 XS = [40, 160, 240, 340]

@@ -45,10 +45,10 @@ def tables(m):
 
 
 def main():
-    srv = fake_ollama.Server(("127.0.0.1", 11498), fake_ollama.H)
+    srv = fake_ollama.Server(("127.0.0.1", 11571), fake_ollama.H)
     srv.calls = []
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    cfg = AIConfig(base_url="http://127.0.0.1:11498", enabled=True)
+    cfg = AIConfig(base_url="http://127.0.0.1:11571", enabled=True)
     with tempfile.TemporaryDirectory() as tmp:
         # 1. title printed once, header repeats -> one table, no AI needed
         f = os.path.join(tmp, "a.pdf")

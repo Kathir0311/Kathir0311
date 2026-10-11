@@ -242,14 +242,14 @@ html.dz-still #dzStill .p2{display:block;fill:var(--ink)}
 .dz-bubble::before{content:"";position:absolute;left:50%;top:-7px;width:12px;height:12px;background:var(--panel);border-left:1px solid var(--line);border-top:1px solid var(--line);transform:translateX(-50%) rotate(45deg)}
 .dz-bubble .typed::after{content:"";display:inline-block;width:2px;height:1em;margin-left:2px;background:var(--accent);vertical-align:-2px;animation:dzBlink 1s steps(2) infinite}
 .dz-caps{list-style:none;margin:26px 0 0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.dz-caps li,.dz-feats li{position:relative;overflow:hidden;display:flex;gap:14px;padding:18px;border-radius:18px;background:var(--dz-card);backdrop-filter:blur(10px);
+.dz-caps li,.dz-feats li,.dz-adv li,.dz-tiles li,.dz-pack li{position:relative;overflow:hidden;display:flex;gap:14px;padding:18px;border-radius:18px;background:var(--dz-card);backdrop-filter:blur(10px);
   border:1px solid var(--line);transition:transform .3s var(--ease),box-shadow .3s,border-color .3s}
-.dz-caps li:hover,.dz-feats li:hover{transform:translateY(-4px);box-shadow:0 18px 46px rgba(16,24,40,.14);border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
+.dz-caps li:hover,.dz-feats li:hover,.dz-adv li:hover,.dz-tiles li:hover,.dz-pack li:hover{transform:translateY(-4px);box-shadow:0 18px 46px rgba(16,24,40,.14);border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
 .spot::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .3s;
   background:radial-gradient(280px circle at var(--mx,50%) var(--my,50%),color-mix(in srgb,var(--dz-a) 16%,transparent),transparent 70%)}
 .spot:hover::before{opacity:1}
-.dz-caps .ic,.dz-feats .ic{position:relative;flex:0 0 42px;height:42px;border-radius:13px;display:grid;place-items:center;color:var(--accent);background:var(--accent-soft)}
-.dz-caps .ic svg,.dz-feats .ic svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.dz-caps .ic,.dz-feats .ic,.dz-adv .ic,.dz-tiles .ic{position:relative;flex:0 0 42px;height:42px;border-radius:13px;display:grid;place-items:center;color:var(--accent);background:var(--accent-soft)}
+.dz-caps .ic svg,.dz-feats .ic svg,.dz-adv .ic svg,.dz-tiles .ic svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .dz-caps b{display:block;font-size:15px;margin-bottom:3px}
 .dz-caps p{margin:0;font-size:13px;line-height:1.55;color:var(--muted)}
 
@@ -419,4 +419,258 @@ html.dz-still .js .reveal{opacity:1;transform:none;transition:none}
 @media (prefers-reduced-motion:reduce){
   body.dz *,body.dz *::before,body.dz *::after{animation:none!important}
   body.dz .lgbtn .spin{animation:spin .7s linear infinite!important}
+}
+
+
+/* ===========================================================================
+   V4.32 — more of what the studio can do, for the people who decide whether to use it:
+   why clients choose it · how Ollama teaches Dez AI · every kind of content · the screen-reader preview ·
+   the standards, before and after · the delivery · how the work changes · the questions clients ask.
+   =========================================================================== */
+.dz-progress{position:fixed;left:0;top:0;height:3px;width:100%;z-index:70;background:var(--dz-fill);transform:scaleX(0);transform-origin:left;pointer-events:none}
+.dz-top{position:fixed;right:18px;bottom:18px;z-index:60;width:46px;height:46px;border-radius:50%;display:grid;place-items:center;padding:0;cursor:pointer;
+  background:var(--dz-fill);border:0;box-shadow:0 12px 30px color-mix(in srgb,var(--dz-a) 40%,transparent);opacity:0;transform:translateY(16px) scale(.9);pointer-events:none;
+  transition:opacity .3s,transform .3s var(--ease)}
+.dz-top.on{opacity:1;transform:none;pointer-events:auto}
+.dz-top svg{width:20px;height:20px;fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.dz-links a{padding:8px 10px}
+
+/* ------------------------------------------------------------ why clients choose it */
+.dz-adv{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.dz-adv li{flex-direction:column;gap:10px;padding:26px 24px 22px}
+.dz-adv .ic{width:50px;height:50px;flex:0 0 50px;border-radius:15px}
+.dz-adv h3{font-size:19px;margin:6px 0 0;letter-spacing:-.015em;line-height:1.25}
+.dz-adv p{margin:0;font-size:14.5px;line-height:1.65;color:var(--muted)}
+.dz-adv p .dz-ai{vertical-align:baseline}
+.dz-adv .pf{margin-top:auto;align-self:flex-start;display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:650;padding:6px 12px 6px 9px;border-radius:999px;
+  background:var(--ok-soft);color:var(--ok)}
+.dz-adv .pf::before{content:"";width:14px;height:14px;border-radius:50%;background:var(--ok);
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 7.4l2.2 2.2 4.8-5' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='7' cy='7' r='7'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 7.4l2.2 2.2 4.8-5' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='7' cy='7' r='7'/%3E%3C/svg%3E") center/contain no-repeat}
+
+/* ------------------------------------------------------------ Ollama teaches Dez AI */
+.dz-teach{background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--dz-c) 7%,transparent) 30%,color-mix(in srgb,var(--dz-a) 6%,transparent) 80%,transparent)}
+.dz-teachgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:56px;align-items:center}
+.dz-teachtext .dz-ticks li b{color:var(--ink)}
+.dz-lessons{position:relative;padding:26px;border-radius:24px;background:var(--dz-card);backdrop-filter:blur(14px);border:1px solid var(--line);box-shadow:var(--dz-shadow)}
+.lz-row{display:grid;grid-template-columns:minmax(0,1fr) 92px minmax(0,1fr);gap:8px;align-items:stretch}
+.lz-side{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}
+.lz-side .dz-orb{margin-bottom:6px}
+.lz-side b{font-size:15px;line-height:1.2}
+.lz-side small{font-size:11.5px;color:var(--muted)}
+.dz-orb.teal{background:radial-gradient(circle at 30% 26%,#fff 0,#d4f6ee 12%,#3cc9b5 45%,#0b6f63 100%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.3),0 8px 26px color-mix(in srgb,var(--dz-c) 45%,transparent)}
+.lz-bub{margin-top:10px;align-self:stretch;min-height:74px;padding:10px 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);font-size:12.5px;line-height:1.5;color:var(--ink);
+  transition:opacity .35s,transform .35s var(--ease)}
+.lz-bub.a{border-color:color-mix(in srgb,var(--dz-a) 45%,var(--line));background:color-mix(in srgb,var(--dz-a) 7%,var(--panel))}
+.lz-bub.swap{opacity:0;transform:translateY(6px)}
+.lz-pipe{display:flex;flex-direction:column;gap:7px;align-items:center;justify-content:center;padding-top:42px}
+.lz-chip{display:block;font:700 10.5px/1 var(--mono);padding:5px 9px;border-radius:999px;color:#fff;background:var(--dz-fill);box-shadow:0 4px 12px color-mix(in srgb,var(--dz-a) 35%,transparent);
+  animation:lzFly 2.8s ease-in-out infinite;animation-delay:calc(var(--k,0) * -.62s)}
+.lz-chip:nth-child(1){--k:0}.lz-chip:nth-child(2){--k:1}.lz-chip:nth-child(3){--k:2}.lz-chip:nth-child(4){--k:3}
+@keyframes lzFly{0%{transform:translateX(-24px);opacity:0}22%{opacity:1}78%{opacity:1}100%{transform:translateX(24px);opacity:0}}
+.lz-meter{margin-top:22px;padding:14px 16px;border-radius:16px;background:var(--panel);border:1px solid var(--line)}
+.lz-mh{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:9px}
+.lz-mh small{font-size:12.5px;color:var(--muted);font-weight:600}
+.lz-mh b{font-size:26px;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums;background:var(--dz-grad);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent}
+.lz-bar{height:10px;border-radius:99px;background:var(--line);overflow:hidden}
+.lz-bar i{display:block;height:100%;width:0;border-radius:99px;background:var(--dz-fill)}
+.lz-nums{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+.lz-nums div{padding:11px 12px;border-radius:14px;background:var(--panel);border:1px solid var(--line);text-align:center}
+.lz-nums b{display:block;font-size:20px;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--ink)}
+.lz-nums small{display:block;margin-top:3px;font-size:11.5px;color:var(--muted)}
+.lz-note{margin:12px 2px 0;font-size:12px;color:var(--muted);text-align:center}
+
+/* ------------------------------------------------------------ every kind of content */
+.dz-content{background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--dz-b) 6%,transparent) 40%,transparent)}
+.dz-tiles{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.dz-tiles li{padding:16px 15px;gap:12px;align-items:flex-start}
+.dz-tiles .ic{flex:0 0 40px;width:40px;height:40px;border-radius:12px}
+.dz-tiles .ic svg{width:21px;height:21px}
+.dz-tiles h3{margin:0 0 3px;font-size:15px;letter-spacing:-.01em}
+.dz-tiles p{margin:0;font-size:12.8px;line-height:1.55;color:var(--muted)}
+
+/* ------------------------------------------------------------ the screen-reader preview */
+.dz-listengrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:56px;align-items:center}
+.dz-sr{display:grid;grid-template-columns:minmax(0,.62fr) minmax(0,1fr);gap:0;border-radius:24px;overflow:hidden;background:var(--dz-card);backdrop-filter:blur(14px);border:1px solid var(--line);box-shadow:var(--dz-shadow)}
+.sr-page{padding:22px 18px;display:flex;flex-direction:column;gap:9px;
+  background-image:linear-gradient(color-mix(in srgb,var(--ink) 4%,transparent) 1px,transparent 1px),linear-gradient(90deg,color-mix(in srgb,var(--ink) 4%,transparent) 1px,transparent 1px);background-size:24px 24px}
+.sr-page .b{position:relative;padding:7px 9px;border-radius:7px;border:1.5px solid color-mix(in srgb,var(--ink) 12%,transparent);background:var(--panel);transition:border-color .3s,box-shadow .3s,background .3s}
+.sr-page .b::before{content:attr(data-n);position:absolute;right:-1px;top:-9px;font:700 9px/14px var(--mono);padding:0 5px;border-radius:5px;background:var(--ink);color:var(--panel)}
+.sr-page .b.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,var(--panel));box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 16%,transparent)}
+.sr-page .ln{display:block;height:6px;border-radius:3px;margin:5px 0;width:100%;background:color-mix(in srgb,var(--ink) 17%,transparent)}
+.sr-page .ln.h{height:11px;background:color-mix(in srgb,var(--ink) 60%,transparent)}
+.sr-page .ln.li{position:relative;margin-left:12px;width:calc(100% - 12px)}
+.sr-page .ln.li::before{content:"";position:absolute;left:-11px;top:0;width:6px;height:6px;border-radius:50%;background:color-mix(in srgb,var(--lst) 70%,transparent)}
+.sr-page .ln.lk{background:color-mix(in srgb,var(--lnk) 62%,transparent)}
+.sr-page .fig svg{display:block;width:100%;height:42px;border-radius:4px}
+.sr-page .fig .sky{fill:color-mix(in srgb,var(--dz-a) 22%,var(--panel))}.sr-page .fig .hill{fill:color-mix(in srgb,var(--dz-c) 62%,var(--panel))}
+.sr-page .tb{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.sr-page .tb .cell{height:12px;border-radius:3px;background:color-mix(in srgb,var(--tbl) 18%,transparent)}
+.sr-page .tb .cell.th{background:color-mix(in srgb,var(--tbl) 46%,transparent)}
+.sr-panel{padding:20px 20px 18px;border-left:1px solid var(--line);display:flex;flex-direction:column;gap:12px;min-height:360px}
+.sr-head{display:flex;align-items:center;gap:10px}
+.sr-head svg{width:22px;height:22px;fill:none;stroke:var(--accent);stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.sr-head .wave{margin-left:auto;display:inline-flex;align-items:center;gap:3px;height:20px}
+.sr-head .wave i{display:block;width:3px;height:5px;border-radius:2px;background:var(--accent);animation:srWave 1s ease-in-out infinite}
+.sr-head .wave i:nth-child(2){animation-delay:-.2s}.sr-head .wave i:nth-child(3){animation-delay:-.4s}.sr-head .wave i:nth-child(4){animation-delay:-.6s}.sr-head .wave i:nth-child(5){animation-delay:-.8s}
+@keyframes srWave{0%,100%{height:4px;opacity:.6}50%{height:18px;opacity:1}}
+.sr-lines{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
+.sr-lines li{font:12.5px/1.45 var(--mono);color:var(--ink);padding:7px 10px;border-radius:9px;background:color-mix(in srgb,var(--panel-2) 85%,transparent);border:1px solid transparent;
+  opacity:0;transform:translateY(7px);transition:opacity .4s var(--ease),transform .4s var(--ease),border-color .3s,background .3s}
+.sr-lines li em{font-style:normal;font-weight:700;color:var(--accent);margin-right:6px}
+.sr-lines li.on{opacity:1;transform:none}
+.sr-lines li.now{border-color:color-mix(in srgb,var(--accent) 50%,transparent);background:color-mix(in srgb,var(--accent) 9%,transparent)}
+
+/* ------------------------------------------------------------ the standards */
+.dz-std{background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--ok) 5%,transparent) 30%,color-mix(in srgb,var(--dz-c) 6%,transparent) 85%,transparent)}
+.dz-stdgrid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:56px;align-items:start}
+.dz-checklist{list-style:none;margin:24px 0 0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:6px 22px}
+.dz-checklist li{position:relative;padding:5px 0 5px 34px;font-size:14px;line-height:1.45;opacity:.5;transition:opacity .45s var(--ease);transition-delay:calc(var(--i,0) * 85ms)}
+.dz-checklist li::before{content:"";position:absolute;left:0;top:5px;width:23px;height:23px;border-radius:50%;background:var(--panel-2);border:1.5px solid var(--line);
+  transition:background .4s,border-color .4s;transition-delay:calc(var(--i,0) * 85ms)}
+.dz-checklist li::after{content:"";position:absolute;left:8px;top:9px;width:7px;height:11px;border:solid #fff;border-width:0 2.6px 2.6px 0;transform:rotate(45deg) scale(0);
+  transition:transform .35s var(--ease);transition-delay:calc(var(--i,0) * 85ms + .12s)}
+.dz-checklist.go li{opacity:1}
+.dz-checklist.go li::before{background:var(--ok);border-color:var(--ok)}
+.dz-checklist.go li::after{transform:rotate(45deg) scale(1)}
+.dz-ba{padding:26px 26px 22px;border-radius:24px;background:var(--dz-card);backdrop-filter:blur(14px);border:1px solid var(--line);box-shadow:var(--dz-shadow)}
+.dz-ba h3{margin:0 0 4px;font-size:18px;letter-spacing:-.015em}
+.dz-ba ul{list-style:none;margin:18px 0 12px;padding:0;display:flex;flex-direction:column;gap:14px}
+.dz-ba li{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 56px;gap:12px;align-items:center;font-size:13.5px}
+.dz-ba .nm{line-height:1.3}
+.dz-ba .bar{position:relative;display:block;height:11px;border-radius:99px;background:color-mix(in srgb,var(--ink) 9%,transparent);overflow:hidden}
+.dz-ba .bar i{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:99px;transition:width 1.1s var(--ease)}
+.dz-ba .bar .b{background:color-mix(in srgb,var(--err) 58%,transparent);transition-delay:calc(var(--r,0) * 120ms)}
+.dz-ba .bar .a{background:var(--ok);min-width:0;transition-delay:calc(var(--r,0) * 120ms + .5s)}
+.dz-ba.go .bar .b{width:var(--b)}
+.dz-ba.go .bar .a{width:var(--a)}
+.dz-ba .num{text-align:right;font:700 13px var(--mono);white-space:nowrap}
+.dz-ba .num s{color:var(--err);text-decoration-thickness:2px}
+.dz-ba .num b{color:var(--ok)}
+.dz-honest{margin:34px auto 0;max-width:900px;padding:16px 20px;border-radius:14px;background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 25%,transparent);border-left:4px solid var(--warn);
+  font-size:14.5px;line-height:1.65;color:var(--ink)}
+
+/* ------------------------------------------------------------ delivery */
+.dz-pack{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.dz-pack li{flex-direction:column;gap:8px;padding:20px 18px 20px}
+.dz-pack h3{margin:6px 0 0;font-size:16.5px;letter-spacing:-.01em}
+.dz-pack p{margin:0;font-size:13.5px;line-height:1.6;color:var(--muted)}
+.pk-vis{position:relative;height:118px;border-radius:14px;display:grid;place-items:center;overflow:hidden;background:var(--panel-2);border:1px solid var(--line)}
+.pk-vis.pdf .pg{position:relative;display:block;width:78px;padding:12px 10px;border-radius:6px;background:var(--panel);border:1px solid var(--line);box-shadow:0 10px 24px rgba(16,24,40,.14);transform:rotate(-3deg)}
+.pk-vis .ln{display:block;height:5px;border-radius:3px;margin:5px 0;background:color-mix(in srgb,var(--ink) 17%,transparent)}
+.pk-vis .ln.h{height:9px;background:color-mix(in srgb,var(--ink) 58%,transparent)}
+.pk-vis .pg em{position:absolute;font:700 8.5px/13px var(--mono);font-style:normal;padding:0 5px;border-radius:5px;color:#fff}
+.pk-vis .pg .t1{left:-14px;top:8px;background:var(--h)}.pk-vis .pg .t2{right:-14px;top:30px;background:#5b6b82}
+.pk-vis.xls{align-content:center;gap:8px;padding:12px 16px}
+.pk-vis.xls .tabs{display:flex;gap:4px;justify-self:start}
+.pk-vis.xls .tabs i{font:600 9.5px/16px var(--mono);font-style:normal;padding:0 7px;border-radius:5px 5px 0 0;background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.pk-vis.xls .tabs i:first-child{background:var(--ok);color:#fff}
+.pk-vis.xls .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;width:100%}
+.pk-vis.xls .grid b{height:14px;border-radius:2px;background:color-mix(in srgb,var(--ok) 14%,var(--panel))}
+.pk-vis.xls .grid b:nth-child(-n+3){background:color-mix(in srgb,var(--ok) 34%,var(--panel))}
+.pk-vis.ver{grid-auto-flow:row;gap:9px;align-content:center}
+.pk-vis.ver .bd{display:inline-flex;align-items:center;gap:8px;font:700 12px var(--mono);padding:6px 14px;border-radius:999px;background:var(--ok-soft);color:var(--ok);border:1px solid color-mix(in srgb,var(--ok) 30%,transparent)}
+.pk-vis.ver .bd::after{content:"✓";font-size:13px}
+.pk-vis.his .dots{position:relative;display:flex;gap:22px;align-items:center}
+.pk-vis.his .dots::before{content:"";position:absolute;left:6px;right:6px;top:50%;height:3px;margin-top:-1.5px;background:var(--line);border-radius:2px}
+.pk-vis.his .dots i{position:relative;display:block;width:16px;height:16px;border-radius:50%;background:var(--panel);border:3px solid var(--accent)}
+.pk-vis.his .dots i:last-child{background:var(--ok);border-color:var(--ok)}
+
+/* ------------------------------------------------------------ the more, in chips */
+.dz-more{margin-top:36px;padding:26px 26px 22px;border-radius:22px;background:var(--dz-card);backdrop-filter:blur(10px);border:1px solid var(--line)}
+.dz-more h3{margin:0 0 14px;font-size:17px;letter-spacing:-.01em}
+.dz-cloud{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:9px}
+.dz-cloud li{font-size:13px;font-weight:600;padding:7px 13px;border-radius:999px;color:var(--info);background:var(--info-soft);border:1px solid color-mix(in srgb,var(--info) 18%,transparent);
+  transition:transform .2s var(--ease),background .2s,color .2s}
+.dz-cloud li:hover{transform:translateY(-2px);background:var(--accent-soft);color:var(--accent)}
+
+/* ------------------------------------------------------------ how the work changes */
+.dz-tablewrap{max-width:1000px;margin:0 auto;overflow-x:auto;border-radius:22px;border:1px solid var(--line);background:var(--dz-card);backdrop-filter:blur(12px);box-shadow:var(--dz-shadow)}
+.dz-tablewrap:focus-visible{outline-offset:3px}
+.dz-table{width:100%;min-width:640px;border-collapse:separate;border-spacing:0;font-size:14.5px}
+.dz-table thead th{text-align:left;padding:16px 20px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:color-mix(in srgb,var(--panel-2) 85%,transparent);border-bottom:1px solid var(--line)}
+.dz-table thead th.us{color:#fff;background:var(--dz-fill);text-transform:none;letter-spacing:0;font-size:14px}
+.dz-table thead th.us .dz-ai b{background:none;color:#fff;-webkit-text-fill-color:#fff}
+.dz-table thead th.us .dz-ai i{background:rgba(255,255,255,.22);box-shadow:none}
+.dz-table tbody th,.dz-table tbody td{padding:15px 20px;text-align:left;vertical-align:top;border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent);line-height:1.5}
+.dz-table tbody th{font-weight:750;width:25%}
+.dz-table tbody td{color:var(--muted);width:30%}
+.dz-table tbody td.us{color:var(--ink);font-weight:550;background:color-mix(in srgb,var(--accent) 6%,transparent);position:relative;padding-left:44px}
+.dz-table tbody td.us::before{content:"";position:absolute;left:18px;top:17px;width:17px;height:17px;border-radius:50%;background:var(--ok)}
+.dz-table tbody td.us::after{content:"";position:absolute;left:24px;top:21px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.dz-table tbody tr:last-child th,.dz-table tbody tr:last-child td{border-bottom:0}
+.dz-table tbody tr{transition:background .2s}
+.dz-table tbody tr:hover th,.dz-table tbody tr:hover td:not(.us){background:color-mix(in srgb,var(--accent) 4%,transparent)}
+
+/* ------------------------------------------------------------ the questions */
+.dz-faqgrid{display:grid;grid-template-columns:minmax(0,.75fr) minmax(0,1.5fr);gap:56px;align-items:start}
+.dz-faqhead{position:sticky;top:96px}
+.dz-faq details{border:1px solid var(--line);border-radius:16px;background:var(--dz-card);backdrop-filter:blur(10px);margin-bottom:10px;overflow:hidden;
+  transition:border-color .25s,box-shadow .25s}
+.dz-faq details[open]{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));box-shadow:0 14px 38px rgba(16,24,40,.1)}
+.dz-faq summary{position:relative;list-style:none;cursor:pointer;padding:17px 54px 17px 20px;font-weight:700;font-size:15.5px;line-height:1.4;letter-spacing:-.005em}
+.dz-faq summary::-webkit-details-marker{display:none}
+.dz-faq summary::after{content:"";position:absolute;right:22px;top:50%;width:9px;height:9px;border:solid var(--accent);border-width:0 2.4px 2.4px 0;transform:translateY(-70%) rotate(45deg);transition:transform .3s var(--ease)}
+.dz-faq details[open] summary::after{transform:translateY(-30%) rotate(225deg)}
+.dz-faq summary:hover{background:color-mix(in srgb,var(--accent) 5%,transparent)}
+.dz-faq .ans{padding:0 20px 18px;animation:dzRise .35s var(--ease) both}
+.dz-faq .ans p{margin:0;font-size:14.5px;line-height:1.7;color:var(--muted)}
+.dz-faq .ans p .dz-ai{vertical-align:baseline}
+
+/* ------------------------------------------------------------ narrow screens (the new parts) */
+@media (max-width:1100px){
+  .dz-adv{grid-template-columns:repeat(2,1fr)}
+  .dz-tiles{grid-template-columns:repeat(2,1fr)}
+  .dz-pack{grid-template-columns:repeat(2,1fr)}
+}
+@media (max-width:960px){
+  .dz-teachgrid,.dz-listengrid,.dz-stdgrid,.dz-faqgrid{grid-template-columns:1fr;gap:34px}
+  .dz-faqhead{position:static}
+  .dz-sr{grid-template-columns:1fr}.sr-panel{border-left:0;border-top:1px solid var(--line);min-height:0}
+  .sr-page{flex-direction:row;flex-wrap:wrap}.sr-page .b{flex:1 1 130px}
+}
+@media (max-width:560px){
+  .dz-adv,.dz-tiles,.dz-pack{grid-template-columns:1fr}
+  .dz-checklist{grid-template-columns:1fr}
+  .dz-ba{padding:20px 16px 18px}.dz-ba li{grid-template-columns:1fr 54px;row-gap:5px}.dz-ba .nm{grid-column:1/-1}
+  .lz-row{grid-template-columns:1fr 62px 1fr}.lz-bub{font-size:11.5px;padding:8px 9px}
+  .lz-nums{grid-template-columns:1fr 1fr 1fr;gap:6px}.lz-nums div{padding:9px 6px}.lz-nums b{font-size:17px}
+  .dz-lessons{padding:18px 14px}
+  .dz-more{padding:20px 16px}
+  .dz-top{right:12px;bottom:12px}
+}
+/* the table of what changes fits a phone — all three columns, no sideways scrolling (a real table still, for a screen reader) */
+@media (max-width:640px){
+  .dz-table{min-width:0;table-layout:fixed;font-size:13px}
+  .dz-table thead th{padding:11px 9px;font-size:10.5px;letter-spacing:.02em}
+  .dz-table thead th.us{font-size:12px}
+  .dz-table thead th:nth-child(1){width:27%}.dz-table thead th:nth-child(2){width:29%}
+  .dz-table tbody th,.dz-table tbody td{padding:12px 9px;width:auto;overflow-wrap:anywhere}
+  .dz-table tbody td.us{padding-left:30px}
+  .dz-table tbody td.us::before{left:9px;top:14px;width:15px;height:15px}
+  .dz-table tbody td.us::after{left:14px;top:17px;width:4px;height:7px}
+}
+/* 320 px wide (WCAG's own reflow width): the header still fits, and "Sign in" stays on one line */
+@media (max-width:360px){
+  .dz-navin{gap:8px}
+  .dz-brand{gap:8px}.dz-brand b{font-size:15.5px}
+  .dz-tools{gap:5px}.dz-icon{width:34px;height:34px}
+  .dz-nav .dz-btn{padding:8px 12px;white-space:nowrap}
+}
+
+/* ------------------------------------------------------------ still: the new parts show how they end */
+html.dz-still body.dz .dz-checklist li,html.dz-still body.dz .dz-checklist li::before,html.dz-still body.dz .dz-checklist li::after,
+html.dz-still body.dz .dz-ba .bar i,html.dz-still body.dz .lz-bar i,html.dz-still body.dz .sr-lines li{transition:none!important;transition-delay:0s!important}
+html.dz-still body.dz .dz-checklist li{opacity:1}
+html.dz-still body.dz .dz-checklist li::before{background:var(--ok);border-color:var(--ok)}
+html.dz-still body.dz .dz-checklist li::after{transform:rotate(45deg) scale(1)}
+html.dz-still body.dz .dz-ba .bar .b{width:var(--b)}html.dz-still body.dz .dz-ba .bar .a{width:var(--a)}
+html.dz-still body.dz .sr-lines li{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){
+  body.dz .dz-checklist li,body.dz .dz-checklist li::before,body.dz .dz-checklist li::after,body.dz .dz-ba .bar i,body.dz .lz-bar i,body.dz .sr-lines li{transition:none!important;transition-delay:0s!important}
+  body.dz .dz-checklist li{opacity:1}
+  body.dz .dz-checklist li::before{background:var(--ok);border-color:var(--ok)}
+  body.dz .dz-checklist li::after{transform:rotate(45deg) scale(1)}
+  body.dz .dz-ba .bar .b{width:var(--b)}body.dz .dz-ba .bar .a{width:var(--a)}
+  body.dz .sr-lines li{opacity:1;transform:none}
 }

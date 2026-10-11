@@ -8,12 +8,20 @@
 * sign in: a wrong password is told (and the form shakes), the right one opens the files; the password can be
   shown; Caps Lock is told; the user name is remembered, the password never
 * Dez AI is introduced
+* V4.32 — more of what the studio can do: why clients choose it, how Ollama teaches Dez AI, every kind of content, the
+  screen-reader preview, the standards (the checks tick, the bars fill), the delivery, how the work changes, the
+  questions; the numbers it quotes are the tool's own; every part works with the keyboard, with the pause button and
+  with the computer's "less motion"; a narrow screen has no sideways scroll
 """
 import os
+import re
 import sys
 import time
 
 from playwright.sync_api import sync_playwright
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
 PORT = int(os.environ.get("PORT", 8000))
 B = f"http://127.0.0.1:{PORT}"
@@ -88,7 +96,12 @@ def main() -> int:
         pg.evaluate("document.querySelector('.dz-statsec').scrollIntoView()")
         time.sleep(2.2)
         nums = [pg.inner_text(f".dz-stats li:nth-child({i}) .cnt").strip() for i in (1, 2, 3, 4)]
-        ok(nums == ["300", "4", "100", "0"], f"the numbers count up to {nums}")
+        codes: set = set()
+        for name_ in ("checker.py", "pipeline.py"):
+            with open(os.path.join(ROOT, "core", name_), encoding="utf-8") as fh_:
+                codes |= set(re.findall(r'"(UA-[A-Z0-9]+)"', fh_.read()))
+        n_checks = len(codes)
+        ok(nums == [str(n_checks), "300", "4", "0"], f"the numbers count up to {nums} (the tool has {n_checks} checks)")
         pg.evaluate("document.querySelector('#teams').scrollIntoView()")
         seen = set()
         t0 = time.time()
@@ -103,6 +116,92 @@ def main() -> int:
         ok(pg.inner_text("#dzRot span.on") != first, "the words turn")
         pg.screenshot(path=f"{OUT}/front_light.png")
 
+        # ------------------------------------------------------------------ V4.32: more of what the studio can do
+        from core.options import BUILTIN_PROFILES, META
+        with open(os.path.join(ROOT, "app.py"), encoding="utf-8") as fh_:
+            undo = int(re.search(r"^HISTORY_LIMIT = (\d+)", fh_.read(), re.M).group(1))
+        body = pg.inner_text("main")
+        ok(body.count(f"{n_checks} machine checks") >= 3, f"the page quotes the tool's own {n_checks} machine checks ({body.count(f'{n_checks} machine checks')}x)")
+        ok(f"{len(BUILTIN_PROFILES)} built-in profiles" in body and f"{(len(META) // 10) * 10}+ options" in body, "…its profiles and options")
+        ok(f"{undo} steps" in body, f"…and its undo steps ({undo})")
+        hrefs = pg.evaluate("[...document.querySelectorAll('.dz-links a')].map(a => a.getAttribute('href'))")
+        ok(hrefs == ["#demo", "#why", "#dezai", "#features", "#standards", "#teams", "#privacy", "#faq"], f"the menu: {hrefs}")
+        ok(all(pg.locator(h).count() == 1 for h in hrefs), "every link of the menu has its part")
+        ok(pg.evaluate("[...document.querySelectorAll('a[href^=\"#\"]')].filter(a => a.getAttribute('href').length > 1 && !document.querySelector(a.getAttribute('href'))).length") == 0,
+           "every link to a part of the page finds it")
+        ids = pg.evaluate("[...document.querySelectorAll('[id]')].map(e => e.id)")
+        ok(len(ids) == len(set(ids)), f"no id is used twice ({[i for i in set(ids) if ids.count(i) > 1][:3]})")
+        ok(pg.evaluate("[...document.querySelectorAll('[aria-labelledby]')].filter(e => !document.getElementById(e.getAttribute('aria-labelledby'))).length") == 0, "every aria-labelledby finds its heading")
+        levels = pg.evaluate("[...document.querySelectorAll('h1,h2,h3,h4')].map(h => Number(h.tagName[1]))")
+        ok(all(b - a <= 1 for a, b in zip(levels, levels[1:])), f"no heading level is skipped {levels[:40]}")
+        for sid in ("why", "teacher", "content", "listen", "standards", "delivery", "compare", "faq"):
+            ok(pg.locator(f"#{sid}[aria-labelledby]").count() == 1 and pg.locator(f"#{sid} h2").count() == 1, f"#{sid}: a part with its own heading")
+        pg.evaluate("document.querySelector('#why').scrollIntoView()")
+        time.sleep(1.0)
+        ok(pg.locator(".dz-adv li").count() == 6 and pg.locator(".dz-adv li h3").count() == 6, "why clients choose it: six reasons")
+        ok(pg.locator(".dz-adv .pf").count() == 6, "…each with its proof")
+        # Ollama teaches Dez AI: the story moves, the numbers grow
+        pg.evaluate("document.querySelector('#teacher').scrollIntoView()")
+        seen_q, best = set(), 0
+        t0 = time.time()
+        while time.time() - t0 < 15:
+            seen_q.add(pg.inner_text("#lzQ").strip())
+            best = max(best, int(pg.inner_text("#lzPct").split()[0]))
+            time.sleep(0.4)
+        ok(len(seen_q) >= 2, f"the teacher is asked different questions {sorted(seen_q)[:3]}")
+        ok(best >= 30, f"the share Dez AI answers alone grows ({best} %)")
+        ok(pg.inner_text("#lzN") != "0", f"…and the lessons kept ({pg.inner_text('#lzN')})")
+        # every kind of content
+        pg.evaluate("document.querySelector('#content').scrollIntoView()")
+        time.sleep(0.8)
+        ok(pg.locator(".dz-tiles li").count() == 16, f"sixteen kinds of content ({pg.locator('.dz-tiles li').count()})")
+        ok(pg.locator(".dz-tiles li h3").all_inner_texts()[:2] == ["Headings", "Columns and reading order"], "…each named")
+        # the screen-reader preview
+        pg.evaluate("document.querySelector('#listen').scrollIntoView()")
+        most, lit = 0, False
+        t0 = time.time()
+        while time.time() - t0 < 14:
+            most = max(most, pg.locator("#dzSR .sr-lines li.on").count())
+            lit = lit or pg.locator("#dzSR .sr-page .b.on").count() == 1
+            time.sleep(0.4)
+        ok(most >= 5, f"the preview reads line after line ({most})")
+        ok(lit, "…and lights the block it reads")
+        # the standards: the checks tick, the bars fill
+        pg.evaluate("document.querySelector('#standards').scrollIntoView()")
+        time.sleep(3.6)
+        ok(pg.evaluate("document.querySelector('#dzChecks').classList.contains('go')") and pg.locator("#dzChecks li").count() == 14, "the checklist ticks (14 checks)")
+        ok(pg.evaluate("[...document.querySelectorAll('#dzChecks li')].every(e => getComputedStyle(e).opacity === '1')"), "…every one")
+        w_b = pg.evaluate("document.querySelector('#dzBA li .bar .b').getBoundingClientRect().width")
+        ok(pg.locator("#dzBA li").count() == 6 and w_b > 40, f"the bars fill ({w_b:.0f}px)")
+        ok("not a conformance certificate" in pg.inner_text("#standards"), "the page says what a machine check is not")
+        # delivery, and the table of what changes
+        ok(pg.locator("#delivery .dz-pack li").count() == 4, "the delivery: four things")
+        ok(pg.locator("#compare table caption").count() == 1 and pg.locator("#compare thead th[scope=col]").count() == 3 and pg.locator("#compare tbody th[scope=row]").count() == 8,
+           "the table of what changes is a real table (caption, column and row headers)")
+        ok(pg.get_attribute("#compare .dz-tablewrap", "tabindex") == "0" and pg.get_attribute("#compare .dz-tablewrap", "role") == "region", "…which a keyboard can scroll")
+        # the questions: one open at a time
+        pg.evaluate("document.querySelector('#faq').scrollIntoView()")
+        time.sleep(0.8)
+        ok(pg.locator(".dz-faq details").count() == 9, f"nine questions ({pg.locator('.dz-faq details').count()})")
+        ok(pg.locator(".dz-faq details[open]").count() == 1 and "certified" in pg.inner_text(".dz-faq details[open] summary"), "the first answer is open")
+        pg.locator(".dz-faq details:nth-of-type(2) summary").click()
+        time.sleep(0.5)
+        ok(pg.locator(".dz-faq details[open]").count() == 1 and "leave my server" in pg.inner_text(".dz-faq details[open] summary"), "opening another closes the first")
+        pg.focus(".dz-faq details:nth-of-type(3) summary")
+        pg.keyboard.press("Enter")
+        time.sleep(0.4)
+        ok("GPU" in pg.inner_text(".dz-faq details[open] summary"), "…and the keyboard opens one too")
+        # the way down and back up
+        pg.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+        time.sleep(0.8)
+        ok(pg.evaluate("new DOMMatrix(getComputedStyle(document.querySelector('#dzProg')).transform).a") > 0.95, "the progress bar is full at the bottom")
+        ok(pg.evaluate("document.querySelector('#dzTop').classList.contains('on')"), "the way back up shows")
+        pg.click("#dzTop")
+        time.sleep(1.6)
+        ok(pg.evaluate("scrollY") < 60, f"…and takes you to the top ({pg.evaluate('scrollY')})")
+        ok(pg.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), "the whole page: nothing wider than the screen")
+        pg.screenshot(path=f"{OUT}/front_top.png")
+
         # pause: everything stops and shows its end; the choice is kept
         pg.click("#dzStill")
         ok(pg.evaluate("document.documentElement.classList.contains('dz-still')"), "pause")
@@ -114,6 +213,10 @@ def main() -> int:
         time.sleep(0.8)
         ok(pg.locator("#dzPage .blk.tagged").count() == 8 and pg.locator("#dzScore.on").count() == 1, "paused: the demo shows how it ends")
         ok(pg.evaluate("[...document.querySelectorAll('.reveal')].every(e => getComputedStyle(e).opacity === '1')"), "paused: everything is there")
+        ok(pg.inner_text("#lzPct") == "78 %" and pg.inner_text("#lzN") == "1,240", f"paused: the teacher's story shows how it ends ({pg.inner_text('#lzPct')}, {pg.inner_text('#lzN')})")
+        ok(pg.evaluate("[...document.querySelectorAll('#dzSR .sr-lines li')].every(e => getComputedStyle(e).opacity === '1')"), "paused: the preview shows every line")
+        ok(pg.evaluate("[...document.querySelectorAll('#dzChecks li')].every(e => getComputedStyle(e).opacity === '1')"), "paused: every check is ticked")
+        ok(pg.evaluate("getComputedStyle(document.querySelector('#dzBA li .bar .b')).width !== '0px'"), "paused: the bars are full")
         pg.click("#dzStill")
         ok(not pg.evaluate("document.documentElement.classList.contains('dz-still')"), "play again")
         # light and dark
@@ -135,6 +238,9 @@ def main() -> int:
         ok(pg.locator("#dzPage .blk.tagged").count() == 8, "less motion: the demo shows how it ends")
         ok(pg.evaluate("[...document.querySelectorAll('.reveal')].every(e => getComputedStyle(e).opacity === '1')"), "less motion: everything is there")
         ok(pg.evaluate("getComputedStyle(document.querySelector('.dz-glow i')).animationName") == "none", "less motion: no CSS animation")
+        ok(pg.inner_text("#lzPct") == "78 %", "less motion: the teacher's story shows how it ends")
+        ok(pg.evaluate("[...document.querySelectorAll('#dzChecks li')].every(e => getComputedStyle(e).opacity === '1')"), "less motion: every check is ticked")
+        ok(pg.evaluate("[...document.querySelectorAll('#dzSR .sr-lines li')].every(e => getComputedStyle(e).opacity === '1')"), "less motion: the preview shows every line")
         ctx.close()
 
         # ------------------------------------------------------------------ a narrow screen, and the computer's dark
@@ -145,8 +251,28 @@ def main() -> int:
         y_h1 = pg.evaluate("document.querySelector('h1').getBoundingClientRect().top")
         ok(y_form < y_h1, f"narrow: the sign-in comes first ({y_form:.0f} < {y_h1:.0f})")
         ok(pg.evaluate("document.documentElement.scrollWidth <= innerWidth + 1"), "narrow: nothing wider than the screen")
+        ok(pg.evaluate("(() => { const w = document.querySelector('#compare .dz-tablewrap'); return w.scrollWidth <= w.clientWidth + 1; })()"), "narrow: the table of what changes shows all three columns, no sideways scrolling")
         ok(pg.evaluate("getComputedStyle(document.body).backgroundColor") != "rgb(244, 246, 248)", "the computer's dark is followed")
         pg.screenshot(path=f"{OUT}/front_mobile.png")
+        ctx.close()
+
+        # ------------------------------------------------------------------ 320 px: the width WCAG tests reflow at
+        ctx, pg = page(viewport={"width": 320, "height": 640})
+        pg.goto(B + "/login")
+        pg.wait_for_selector("#lgForm")
+        beyond = pg.evaluate("""(() => { const W = innerWidth, bad = [];
+          document.querySelectorAll('body *').forEach(e => {
+            const r = e.getBoundingClientRect();
+            if (r.width === 0 || (r.right <= W + 0.5 && r.left >= -0.5)) return;
+            if (e.closest('[aria-hidden="true"]') || getComputedStyle(e).position === 'fixed') return;       // the pictures that only decorate
+            for (let p = e.parentElement; p && p !== document.body; p = p.parentElement)
+              if (['hidden', 'auto', 'scroll', 'clip'].includes(getComputedStyle(p).overflowX)) return;     // inside a box that scrolls or clips
+            bad.push(e.tagName + '.' + e.className + ' ' + Math.round(r.left) + '→' + Math.round(r.right));
+          });
+          return bad.slice(0, 5); })()""")
+        ok(not beyond, f"320 px: nothing a person reads or presses goes beyond the screen: {beyond}")
+        ok(pg.evaluate("(() => { const w = document.querySelector('#compare .dz-tablewrap'); return w.scrollWidth <= w.clientWidth + 1; })()"), "320 px: the table of what changes needs no sideways scrolling")
+        ok(pg.evaluate("document.querySelector('#dzNavSign').getBoundingClientRect().height") < 44, "320 px: \"Sign in\" stays on one line")
         ctx.close()
 
         # ------------------------------------------------------------------ signing in

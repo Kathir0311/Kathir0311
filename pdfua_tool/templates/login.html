@@ -21,6 +21,7 @@ setTimeout(function () { if (!window.__dzOK) document.documentElement.classList.
 </head>
 <body class="loginpage dz">
 <a class="dz-skip" href="#signin">Skip to sign in</a>
+<div class="dz-progress" id="dzProg" aria-hidden="true"></div>
 <canvas id="dzNet" aria-hidden="true"></canvas>
 <div class="dz-glow" aria-hidden="true"><i></i><i></i><i></i></div>
 
@@ -33,11 +34,13 @@ setTimeout(function () { if (!window.__dzOK) document.documentElement.classList.
     </a>
     <nav class="dz-links" aria-label="On this page">
       <a href="#demo">See it work</a>
+      <a href="#why">Why us</a>
       <a href="#dezai">Dez&nbsp;AI</a>
       <a href="#features">Features</a>
-      <a href="#how">How it works</a>
+      <a href="#standards">Standards</a>
       <a href="#teams">Teams</a>
       <a href="#privacy">Privacy</a>
+      <a href="#faq">FAQ</a>
     </nav>
     <div class="dz-tools">
       <button type="button" class="dz-icon" id="dzStill" aria-pressed="false" title="Pause the moving pictures" aria-label="Pause the moving pictures">
@@ -66,7 +69,7 @@ setTimeout(function () { if (!window.__dzOK) document.documentElement.classList.
       <a class="dz-btn ghost lg" href="#demo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5l11 7-11 7z"/></svg> Watch Dez AI work</a>
     </div>
     <ul class="dz-chips reveal" aria-label="At a glance">
-      <li>ISO 14289-1 · PDF/UA-1</li><li>WCAG 2.1 AA checks</li><li>Runs on your own server</li><li>Many people at once</li>
+      <li>ISO 14289-1 · PDF/UA-1</li><li>WCAG 2.1 AA checks</li><li>{{ facts.checks }} machine checks on every build</li><li>Runs on your own server</li><li>Many people at once</li>
     </ul>
   </div>
 
@@ -149,6 +152,43 @@ setTimeout(function () { if (!window.__dzOK) document.documentElement.classList.
   </div>
 </section>
 
+<!-- ============================================================ why clients choose it -->
+<section class="dz-sec" id="why" aria-labelledby="dzWhyT">
+  <div class="dz-wrap">
+    <div class="dz-head reveal">
+      <p class="dz-kicker">Why clients choose us</p>
+      <h2 id="dzWhyT">Accessible PDFs you can hand over <span class="dz-grad">with confidence.</span></h2>
+      <p class="dz-sub">Accessibility work is usually judged late — by an audit, a screen-reader user or a regulator. The studio moves the checking to the start, and keeps the proof.</p>
+    </div>
+    <ul class="dz-adv">
+      <li class="reveal spot"><span class="ic c2"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/></svg></span>
+        <h3>Right the first time</h3>
+        <p><span class="dz-ai xs"><b>Dez</b><i>AI</i></span> proposes the whole structure in one pass — headings, lists, tables, figures, links and the reading order — with a confidence on every tag. Your team starts from an almost finished file, not a blank one.</p>
+        <span class="pf">The doubtful tags are listed first</span></li>
+      <li class="reveal spot"><span class="ic c1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></span>
+        <h3>Checked on every build, not hoped for</h3>
+        <p>{{ facts.checks }} machine checks of ISO 14289-1 and WCAG run on every build — plus veraPDF when you install it — and the report says exactly what is left for a person to judge.</p>
+        <span class="pf">Contrast and table cells follow PAC 2024’s rules</span></li>
+      <li class="reveal spot"><span class="ic c5"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5 14h6l-1 7 8-11h-6z"/></svg></span>
+        <h3>Fast for one. Fair for many.</h3>
+        <p>300 pages in under a minute on a multi-core server. A file of 4,000 tags still answers a change in well under a second, and the queue serves each person in turn — nobody waits behind somebody else’s batch.</p>
+        <span class="pf">Files, whole folders or the command line</span></li>
+      <li class="reveal spot"><span class="ic c4"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>
+        <h3>Your files never leave</h3>
+        <p>The AI and its teacher run on your own server. Connections outside your network are refused before a byte is sent — and logged. No cloud service, no tracker, nothing loaded from another server.</p>
+        <span class="pf">Works without the internet</span></li>
+      <li class="reveal spot"><span class="ic c6"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3"/></svg></span>
+        <h3>It learns each client’s house style</h3>
+        <p>Approved files teach the studio what a heading, a caption or a table looks like for that client. Every correction is learned live — the same fix is offered everywhere and used on the next file.</p>
+        <span class="pf">Fewer fixes with every file</span></li>
+      <li class="reveal spot"><span class="ic c8"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4h6v3H9z"/><path d="M9 14l2 2 4-4"/></svg></span>
+        <h3>Proof for your client</h3>
+        <p>Every file ends with the accessible PDF, an Excel report — findings before and after, the tag tree, figures, tables, links, a manual checklist — and a history of who did what, when, and for how long.</p>
+        <span class="pf">An audit trail for every file</span></li>
+    </ul>
+  </div>
+</section>
+
 <!-- ============================================================ Dez AI -->
 <section class="dz-sec dz-ai-sec" id="dezai" aria-labelledby="dzAiT">
   <div class="dz-wrap dz-aigrid">
@@ -219,13 +259,53 @@ setTimeout(function () { if (!window.__dzOK) document.documentElement.classList.
   </div>
 </section>
 
+<!-- ============================================================ Ollama teaches Dez AI -->
+<section class="dz-sec dz-teach" id="teacher" aria-labelledby="dzTeachT">
+  <div class="dz-wrap dz-teachgrid">
+    <div class="dz-teachtext">
+      <p class="dz-kicker reveal">Learns from every answer</p>
+      <h2 id="dzTeachT" class="reveal">Ollama teaches. <span class="dz-grad">Dez AI remembers.</span></h2>
+      <p class="dz-sub reveal">A local language model can answer almost anything — slowly, and only once. So every answer it gives becomes a lesson. <span class="dz-ai xs"><b>Dez</b><i>AI</i></span> studies the lessons, proves that it can answer the same kind of question alone — and then does, in a blink, even when the model is switched off.</p>
+      <ul class="dz-ticks reveal">
+        <li><b>Proven, not trusted.</b> A student answers alone only after it agrees with its teacher on questions it has not seen — and it is checked against the teacher now and then.</li>
+        <li><b>People outrank both.</b> What your team decides in a file counts more than any answer; an answer a person changed is never used again.</li>
+        <li><b>Your studio’s own words.</b> Dez AI shows the teacher how your team worded similar things, so what it writes follows your house style.</li>
+      </ul>
+    </div>
+    <div class="dz-lessons reveal" id="dzLessons" aria-hidden="true">
+      <div class="lz-row">
+        <div class="lz-side t">
+          <span class="dz-orb mini teal"><i></i></span><b>Ollama</b><small>the teacher</small>
+          <div class="lz-bub" id="lzQ">Is row 1 of this table a header?</div>
+        </div>
+        <div class="lz-pipe"><span class="lz-chip">lesson</span><span class="lz-chip">lesson</span><span class="lz-chip">lesson</span><span class="lz-chip">lesson</span></div>
+        <div class="lz-side s">
+          <span class="dz-orb mini"><i></i></span><b class="dz-ai"><b>Dez</b><i>AI</i></b><small>the student</small>
+          <div class="lz-bub a" id="lzA">Yes — I have seen 3 tables like it.</div>
+        </div>
+      </div>
+      <div class="lz-meter">
+        <div class="lz-mh"><small>Answered by Dez AI alone</small><b id="lzPct">0 %</b></div>
+        <div class="lz-bar"><i id="lzBar"></i></div>
+      </div>
+      <div class="lz-nums">
+        <div><b id="lzN">0</b><small>lessons kept</small></div>
+        <div><b id="lzS">0</b><small>students proven</small></div>
+        <div><b id="lzT">0 min</b><small>of waiting saved</small></div>
+      </div>
+      <p class="lz-note">An illustration — your own numbers are on the Admin page, for every kind of question.</p>
+    </div>
+    <p class="sr-only">An illustration: Ollama, the teacher, answers a question; the answer travels to Dez AI as a lesson. As the lessons grow, the share of questions that Dez AI answers by itself rises, and so does the waiting time saved.</p>
+  </div>
+</section>
+
 <!-- ============================================================ numbers -->
 <section class="dz-sec dz-statsec" aria-label="In numbers">
   <div class="dz-wrap">
     <ul class="dz-stats">
+      <li class="reveal"><b><span class="cnt" data-to="{{ facts.checks }}">{{ facts.checks }}</span></b><span>machine checks of PDF/UA and WCAG on every build</span></li>
       <li class="reveal"><b><span class="cnt" data-to="300">300</span></b><span>pages tagged in under a minute on a multi-core server</span></li>
       <li class="reveal"><b><span class="cnt" data-to="4">4</span></b><span>workflow steps: Production, QA, Final QA, Delivery</span></li>
-      <li class="reveal"><b><span class="cnt" data-to="100">100</span>%</b><span>on your own server — local AI, no cloud</span></li>
       <li class="reveal"><b><span class="cnt" data-to="0">0</span></b><span>files sent outside your network</span></li>
     </ul>
   </div>
@@ -242,22 +322,193 @@ setTimeout(function () { if (!window.__dzOK) document.documentElement.classList.
       <li class="reveal spot"><span class="ic c1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></span>
         <h3>PDF/UA and WCAG, checked</h3><p>ISO 14289-1 machine checks on every build, colour-contrast checks with one-click repair, optional veraPDF, and an Excel report for every file.</p></li>
       <li class="reveal spot"><span class="ic c2"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/></svg></span>
-        <h3>An editor that feels like Acrobat — and is faster</h3><p>Draw a zone and press a key, drag the reading order, merge and split tags, edit tables and lists, undo and redo — with hotkeys for everything.</p></li>
+        <h3>An editor that feels like Acrobat — and is faster</h3><p>Draw a zone and press a key, drag the reading order, merge and split tags, edit tables and lists, undo and redo — with hotkeys for the everyday tags and edits.</p></li>
       <li class="reveal spot"><span class="ic c3"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 11a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 19.7l1-1"/></svg></span>
         <h3>Links, in one stage</h3><p>Cross-references, footnotes, contents, figures, tables, references, web and e-mail links found for you — one-way or two-way — checked and tagged.</p></li>
       <li class="reveal spot"><span class="ic c4"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg></span>
-        <h3>Hear it the way NVDA reads it</h3><p>Say-all with the words lit as they are spoken, quick keys, and every problem a listener would trip over — before your client does.</p></li>
+        <h3>Hear it the way a screen reader will</h3><p>Say-all with the words lit as they are spoken, quick keys, and every problem a listener would trip over — before your client does.</p></li>
       <li class="reveal spot"><span class="ic c5"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L5 14h6l-1 7 8-11h-6z"/></svg></span>
         <h3>Batch, fast, multi-core</h3><p>Upload files or whole folders and let the queue run: several files at once, every page analysed on all your cores, and everybody served in turn.</p></li>
       <li class="reveal spot"><span class="ic c6"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4z"/><path d="M3 12l9 4 9-4M3 17l9 4 9-4"/></svg></span>
         <h3>House styles for every client</h3><p>Profiles per client, learned from their approved files, so a publisher’s books come out the way that publisher wants them — every time.</p></li>
       <li class="reveal spot"><span class="ic c7"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/></svg></span>
-        <h3>Scanned pages and many languages</h3><p>Optional OCR gives scanned pages a text layer; Unicode text — Tamil, Greek and more — is read, tagged and spoken correctly.</p></li>
+        <h3>Scanned pages and many languages</h3><p>Optional OCR gives scanned pages a text layer; Unicode text — Tamil, Greek and more — is read and tagged, with the language set for each passage.</p></li>
       <li class="reveal spot"><span class="ic c8"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M15 14.5c3 0 6 1.6 6 5.5"/></svg></span>
         <h3>Made for teams</h3><p>Roles, assignments, due dates, PAC reports, review comments and a history of every step — and one person at a time in a file, so nobody’s work is overwritten.</p></li>
     </ul>
+    <div class="dz-more reveal">
+      <h3>…and the details that save hours</h3>
+      <ul class="dz-cloud">
+        <li>Draw a zone, press a key</li>
+        <li>Undo and redo — {{ facts.undo }} steps</li>
+        <li>Hotkeys for the everyday tags and edits</li>
+        <li>One click: fix everything the tool can fix</li>
+        <li>Import the tags a file already has — never overwritten silently</li>
+        <li>Reading order checked by the vision model, page by page</li>
+        <li>Split two-page spreads</li>
+        <li>Zoom up to 800 %</li>
+        <li>Colour-contrast repair — only what you tick</li>
+        <li>Review comments pinned to the page and the tag</li>
+        <li>Rights for each person</li>
+        <li>Working time for every file</li>
+        <li>An offline rule book of PDF/UA and WCAG</li>
+        <li>{{ (facts.options // 10) * 10 }}+ options · {{ facts.profiles }} built-in profiles</li>
+        <li>Light and dark look</li>
+        <li>Windows and Linux</li>
+      </ul>
+    </div>
   </div>
 </section>
+
+<!-- ============================================================ every kind of content -->
+<section class="dz-sec dz-content" id="content" aria-labelledby="dzContT">
+  <div class="dz-wrap">
+    <div class="dz-head reveal">
+      <p class="dz-kicker">Built for real documents</p>
+      <h2 id="dzContT">Journals, books, worksheets, forms — <span class="dz-grad">tagged properly.</span></h2>
+      <p class="dz-sub">Every kind of content gets the structure a screen reader needs — not just a tag that happens to pass a check.</p>
+    </div>
+    <ul class="dz-tiles">
+      <li class="reveal spot"><span class="ic c2"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v16M18 4v16M6 12h12"/></svg></span>
+        <div><h3>Headings</h3><p>Levels checked and never skipping, with a section around every top-level heading.</p></div></li>
+      <li class="reveal spot"><span class="ic c4"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="8" height="16" rx="1.5"/><rect x="13" y="4" width="8" height="16" rx="1.5"/></svg></span>
+        <div><h3>Columns and reading order</h3><p>Two-column articles are read in the right order — and you can drag it into shape.</p></div></li>
+      <li class="reveal spot"><span class="ic c5"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/></svg></span>
+        <div><h3>Lists</h3><p>Nested, numbered or lettered; a list that runs over a page break stays one list.</p></div></li>
+      <li class="reveal spot"><span class="ic c6"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10M15 10v10"/></svg></span>
+        <div><h3>Tables</h3><p>Header cells and scope, merged cells, and a table that runs over several pages becomes one table.</p></div></li>
+      <li class="reveal spot"><span class="ic c3"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M3 16l5-4 4 3 3-2 6 4"/></svg></span>
+        <div><h3>Figures and alt text</h3><p>A description drafted for you to approve; decorative pictures become artifacts.</p></div></li>
+      <li class="reveal spot"><span class="ic c7"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 11h14M5 16h8"/><path d="M17 15v4M15 17h4"/></svg></span>
+        <div><h3>Captions and footnotes</h3><p>Linked both ways — the note and its mark, the caption and its figure.</p></div></li>
+      <li class="reveal spot"><span class="ic c8"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 11a4 4 0 0 0-5.7 0l-3 3A4 4 0 0 0 11 19.7l1-1"/></svg></span>
+        <div><h3>Links and cross-references</h3><p>Web and e-mail addresses, contents entries, sections, figures, tables and references.</p></div></li>
+      <li class="reveal spot"><span class="ic c1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h12M4 12h12M4 18h12"/><path d="M19 6h1M19 12h1M19 18h1"/></svg></span>
+        <div><h3>Contents and index</h3><p>Contents entries and index page numbers become working links.</p></div></li>
+      <li class="reveal spot"><span class="ic c4"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/></svg></span>
+        <div><h3>Reference lists</h3><p>One entry, one tag — however many lines it runs over.</p></div></li>
+      <li class="reveal spot"><span class="ic c2"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5H6l6 7-6 7h12"/></svg></span>
+        <div><h3>Mathematics</h3><p>Formulas read aloud — “a squared plus b squared equals c squared” — with the LaTeX kept for the report.</p></div></li>
+      <li class="reveal spot"><span class="ic c6"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 12h6"/></svg></span>
+        <div><h3>Forms</h3><p>Fields are tagged as forms and get a label a screen reader announces.</p></div></li>
+      <li class="reveal spot"><span class="ic c7"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 18h16"/><path d="M8 12h8" stroke-dasharray="2 3"/></svg></span>
+        <div><h3>Running heads and page numbers</h3><p>Marked as artifacts, so nobody has to hear them on every page.</p></div></li>
+      <li class="reveal spot"><span class="ic c5"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14M5 13h14M5 18h9" stroke-dasharray="3 2"/></svg></span>
+        <div><h3>Worksheets</h3><p>Write-in lines are announced as a blank line — not as noise.</p></div></li>
+      <li class="reveal spot"><span class="ic c1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M20 8V5a1 1 0 0 0-1-1h-3M4 16v3a1 1 0 0 0 1 1h3M20 16v3a1 1 0 0 1-1 1h-3"/><path d="M8 12h8"/></svg></span>
+        <div><h3>Scanned pages</h3><p>Optional OCR gives a scan a text layer, ready to be tagged.</p></div></li>
+      <li class="reveal spot"><span class="ic c3"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg></span>
+        <div><h3>Many languages</h3><p>Tamil, Greek and more, with the language set for each passage.</p></div></li>
+      <li class="reveal spot"><span class="ic c8"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v18a9 9 0 0 0 0-18z" fill="currentColor"/></svg></span>
+        <div><h3>Colour contrast</h3><p>Measured against the real background — photos and gradients included — with a colour suggested.</p></div></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ hear it -->
+<section class="dz-sec dz-listen" id="listen" aria-labelledby="dzListenT">
+  <div class="dz-wrap dz-listengrid">
+    <div class="dz-ltext">
+      <p class="dz-kicker reveal">Screen-reader preview</p>
+      <h2 id="dzListenT" class="reveal">Hear it before <span class="dz-grad">your client does.</span></h2>
+      <p class="dz-sub reveal">The Preview tab reads the tags in reading order, in the phrasing a screen reader such as NVDA uses — heading levels, lists with their number of items, tables with their headers, links and descriptions. A missing label is heard, not just flagged.</p>
+      <ul class="dz-ticks reveal">
+        <li>Say-all with the words lit as they are spoken — by a voice on your own computer</li>
+        <li>Empty table cells are read as “Blank”, write-in lines as “Blank line”</li>
+        <li>Every problem a listener would trip over is listed with its page</li>
+      </ul>
+    </div>
+    <div class="dz-sr reveal" id="dzSR" data-i="0" aria-hidden="true">
+      <div class="sr-page">
+        <div class="b" data-n="1"><i class="ln w70 h"></i></div>
+        <div class="b" data-n="2"><i class="ln"></i><i class="ln w80"></i></div>
+        <div class="b fig" data-n="3"><svg viewBox="0 0 120 40" preserveAspectRatio="none"><rect width="120" height="40" rx="4" class="sky"/><path d="M0 40 L30 16 L50 30 L74 12 L120 40Z" class="hill"/></svg></div>
+        <div class="b tb" data-n="4"><span class="cell th"></span><span class="cell th"></span><span class="cell th"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span></div>
+        <div class="b" data-n="5"><i class="ln li"></i><i class="ln li w80"></i><i class="ln li w60"></i></div>
+        <div class="b" data-n="6"><i class="ln w55 lk"></i></div>
+      </div>
+      <div class="sr-panel">
+        <div class="sr-head"><svg viewBox="0 0 24 24"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg><b>Preview</b><span class="wave"><i></i><i></i><i></i><i></i><i></i></span></div>
+        <ol class="sr-lines">
+          <li data-b="1"><em>heading level 1</em> Annual report 2025</li>
+          <li data-b="2"><em>text</em> Our teams reached 41 schools this year.</li>
+          <li data-b="3"><em>graphic</em> Bar chart of quarterly sales; Q4 is the highest.</li>
+          <li data-b="4"><em>table</em> with 3 columns and 2 rows</li>
+          <li data-b="4"><em>column header</em> Region</li>
+          <li data-b="5"><em>list</em> with 3 items</li>
+          <li data-b="6"><em>link</em> Download the scoring guide (PDF)</li>
+        </ol>
+      </div>
+    </div>
+    <p class="sr-only">An illustration: a page with a heading, a paragraph, a picture, a table, a list and a link is read block by block, and what a screen reader would announce appears beside it: heading level 1, the text, the picture’s description, a table with 3 columns, a column header, a list with 3 items and a link with its description.</p>
+  </div>
+</section>
+
+<!-- ============================================================ the standards -->
+<section class="dz-sec dz-std" id="standards" aria-labelledby="dzStdT">
+  <div class="dz-wrap dz-stdgrid">
+    <div class="dz-stdtext">
+      <p class="dz-kicker reveal">Standards</p>
+      <h2 id="dzStdT" class="reveal">{{ facts.checks }} machine checks. <span class="dz-grad">Nothing left to chance.</span></h2>
+      <p class="dz-sub reveal">Every build is checked against ISO 14289-1 (PDF/UA-1) and WCAG 2.1 AA. You get a score before and after, a list of what is left — and a manual checklist for what only a person can judge.</p>
+      <ul class="dz-checklist" id="dzChecks">
+        <li>Document is tagged and marked as tagged</li>
+        <li>Language and title are set, and the title is shown</li>
+        <li>The structure tree is whole and well formed</li>
+        <li>Reading order follows the page</li>
+        <li>Heading levels never skip</li>
+        <li>Every figure has alt text — or is an artifact</li>
+        <li>Tables have header cells and scope</li>
+        <li>Lists are lists, with their items and labels</li>
+        <li>Links have a destination and a description</li>
+        <li>Form fields have labels</li>
+        <li>Fonts are embedded and text maps to Unicode</li>
+        <li>Text contrast is measured on the real background</li>
+        <li>Bookmarks follow the headings</li>
+        <li>The metadata declares PDF/UA-1</li>
+      </ul>
+    </div>
+    <div class="dz-ba reveal" id="dzBA">
+      <h3>Checker errors on our reference files</h3>
+      <p class="tiny muted">Before and after the studio’s automatic pass — nobody has touched a tag yet.</p>
+      <ul>
+        <li><span class="nm">Journal article, two columns</span><span class="bar" style="--b:100%;--a:11%"><i class="b"></i><i class="a"></i></span><span class="num"><s>9</s> → <b>1</b></span></li>
+        <li><span class="nm">Book with contents and bookmarks</span><span class="bar" style="--b:67%;--a:0%"><i class="b"></i><i class="a"></i></span><span class="num"><s>6</s> → <b>0</b></span></li>
+        <li><span class="nm">Form with fields</span><span class="bar" style="--b:100%;--a:0%"><i class="b"></i><i class="a"></i></span><span class="num"><s>9</s> → <b>0</b></span></li>
+        <li><span class="nm">Attendance register with a table</span><span class="bar" style="--b:67%;--a:0%"><i class="b"></i><i class="a"></i></span><span class="num"><s>6</s> → <b>0</b></span></li>
+        <li><span class="nm">Tamil and Greek text</span><span class="bar" style="--b:67%;--a:0%"><i class="b"></i><i class="a"></i></span><span class="num"><s>6</s> → <b>0</b></span></li>
+        <li><span class="nm">Rotated pages</span><span class="bar" style="--b:100%;--a:11%"><i class="b"></i><i class="a"></i></span><span class="num"><s>9</s> → <b>1</b></span></li>
+      </ul>
+      <p class="tiny muted">The one left is a picture: its description is drafted for a person to approve.</p>
+    </div>
+  </div>
+  <div class="dz-wrap">
+    <p class="dz-honest reveal"><b>An honest note.</b> A machine check is not a conformance certificate. Confirm delivery files in PAC 2024 and veraPDF — the studio runs veraPDF for you when it is installed, and its workflow asks for the PAC report before a file moves on to QA.</p>
+  </div>
+</section>
+
+<!-- ============================================================ delivery -->
+<section class="dz-sec dz-deliver" id="delivery" aria-labelledby="dzDelT">
+  <div class="dz-wrap">
+    <div class="dz-head reveal">
+      <p class="dz-kicker">Delivery</p>
+      <h2 id="dzDelT">What lands on <span class="dz-grad">your client’s desk.</span></h2>
+      <p class="dz-sub">A file, its proof and its story — in one delivery.</p>
+    </div>
+    <ul class="dz-pack">
+      <li class="reveal spot"><div class="pk-vis pdf" aria-hidden="true"><span class="pg"><i class="ln w70 h"></i><i class="ln"></i><i class="ln w80"></i><em class="t1">H1</em><em class="t2">P</em></span></div>
+        <h3>The accessible PDF</h3><p>Tagged, with its language, title, bookmarks and metadata set. The pages look exactly as before — we check that pixel for pixel.</p></li>
+      <li class="reveal spot"><div class="pk-vis xls" aria-hidden="true"><span class="tabs"><i>Summary</i><i>Findings</i><i>Tag tree</i></span><span class="grid"><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b></span></div>
+        <h3>The Excel report</h3><p>Scores, findings before and after, the tag tree, figures, tables, links and fields — and a manual checklist with Pass, Fail or N/A.</p></li>
+      <li class="reveal spot"><div class="pk-vis ver" aria-hidden="true"><span class="bd">veraPDF</span><span class="bd">PAC 2024</span></div>
+        <h3>The verdict</h3><p>veraPDF’s PDF/UA-1 verdict on every build when it is installed, and the PAC report attached to the file before it goes to QA.</p></li>
+      <li class="reveal spot"><div class="pk-vis his" aria-hidden="true"><span class="dots"><i></i><i></i><i></i><i></i></span></div>
+        <h3>The story of the file</h3><p>Every step with who and when, the review comments with their category and severity — and the time each person really worked on it.</p></li>
+    </ul>
+  </div>
+</section>
+
+
 
 <!-- ============================================================ how it works -->
 <section class="dz-sec dz-how" id="how" aria-labelledby="dzHowT">
@@ -287,6 +538,10 @@ setTimeout(function () { if (!window.__dzOK) document.documentElement.classList.
         <li>Fair queue — one file of each person in turn, urgent files first</li>
         <li>Live “who is in this file” and “somebody changed it” notices</li>
         <li>An admin can take a file over; a forgotten tab lets go by itself</li>
+        <li>Review comments with a category and a severity, pinned to the page and the tag</li>
+        <li>A PAC report is asked for before a file goes to QA</li>
+        <li>Working time for every file — only active time, never breaks</li>
+        <li>Rights for each person: who may upload, delete, download or use the AI</li>
       </ul>
     </div>
     <div class="dz-team reveal" id="dzTeam" aria-hidden="true">
@@ -300,6 +555,32 @@ setTimeout(function () { if (!window.__dzOK) document.documentElement.classList.
         </div>
         <div class="bars"><i></i><i></i><i></i></div>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ how the work changes -->
+<section class="dz-sec dz-cmp" id="compare" aria-labelledby="dzCmpT">
+  <div class="dz-wrap">
+    <div class="dz-head reveal">
+      <p class="dz-kicker">What changes</p>
+      <h2 id="dzCmpT">The same work, <span class="dz-grad">far less of the waiting.</span></h2>
+    </div>
+    <div class="dz-tablewrap reveal" role="region" aria-labelledby="dzCmpC" tabindex="0">
+      <table class="dz-table">
+        <caption id="dzCmpC" class="sr-only">Tagging by hand compared with working in the studio</caption>
+        <thead><tr><th scope="col"><span class="sr-only">What</span></th><th scope="col">Tagging by hand</th><th scope="col" class="us">In the studio, with <span class="dz-ai xs"><b>Dez</b><i>AI</i></span></th></tr></thead>
+        <tbody>
+          <tr><th scope="row">The first structure</th><td>Built tag by tag</td><td class="us">Proposed for the whole file in one pass, with a confidence on every tag</td></tr>
+          <tr><th scope="row">Finding the doubtful places</th><td>Reading everything again</td><td class="us">Listed first — the answer to one settles the others that look the same</td></tr>
+          <tr><th scope="row">The same fix, again and again</th><td>Repeated by hand, each time</td><td class="us">Offered everywhere at once, and learned for the next file</td></tr>
+          <tr><th scope="row">Alt text</th><td>Written from scratch</td><td class="us">Drafted by the local vision model; a picture described once is remembered</td></tr>
+          <tr><th scope="row">Checking</th><td>A separate tool, at the end</td><td class="us">Live issues while you edit, and {{ facts.checks }} checks on every build</td></tr>
+          <tr><th scope="row">Quality control</th><td>E-mail and spreadsheets</td><td class="us">Review comments, rework rounds, a PAC gate and a history</td></tr>
+          <tr><th scope="row">Many people on one job</th><td>Overwritten files and version names</td><td class="us">One person at a time in a file; everybody else watches it live</td></tr>
+          <tr><th scope="row">Where the files go</th><td>Depends on the tool — some are online services</td><td class="us">Nowhere — your own server</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </section>
@@ -318,8 +599,41 @@ setTimeout(function () { if (!window.__dzOK) document.documentElement.classList.
         <li><span class="dz-ai xs"><b>Dez</b><i>AI</i></span> runs on your own server — a local model, no cloud service</li>
         <li>Every connection outside your network is refused before a byte is sent, and logged</li>
         <li>The pages load nothing from the internet: no CDN, no tracker, no web fonts</li>
-        <li>Users, settings and the learning database stay on your machine — with a one-click backup</li>
+        <li>Users, settings and the learning database stay on your machine; the learning database has a one-click backup</li>
+        <li>Passwords are kept only as salted PBKDF2-SHA256 hashes; a sign-in ends when the app’s tabs are closed</li>
+        <li>Roles and rights for each person, and a log of who did what</li>
       </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ questions -->
+<section class="dz-sec dz-faqsec" id="faq" aria-labelledby="dzFaqT">
+  <div class="dz-wrap dz-faqgrid">
+    <div class="dz-faqhead">
+      <p class="dz-kicker reveal">Questions</p>
+      <h2 id="dzFaqT" class="reveal">What clients ask <span class="dz-grad">before they start.</span></h2>
+      <p class="dz-sub reveal">Straight answers — including the limits.</p>
+    </div>
+    <div class="dz-faq">
+      <details class="reveal" name="faq" open><summary>Is the result certified PDF/UA?</summary>
+        <div class="ans"><p>No tool can certify that by itself. The studio checks every build against ISO 14289-1 and WCAG 2.1 AA with {{ facts.checks }} machine checks, runs veraPDF when you install it, and lists what only a person can judge — the quality of an alt text, whether a reading order makes sense — in a manual checklist. Confirm delivery files in PAC 2024 and veraPDF; the workflow asks for the PAC report before a file goes to QA.</p></div></details>
+      <details class="reveal" name="faq"><summary>Do my files leave my server?</summary>
+        <div class="ans"><p>No. The studio, its local AI and its learning database all run on your own server. Every connection outside your network is refused before a byte is sent, and logged; the pages load no font, script or picture from the internet.</p></div></details>
+      <details class="reveal" name="faq"><summary>What do we need to run it — and is a GPU required?</summary>
+        <div class="ans"><p>A Linux or Windows server with Python 3.10 or newer, and a browser for everybody else. Tesseract (for scanned pages), veraPDF and Ollama (the local models) are optional. Tagging, checking and editing need no GPU; the local models run faster on one but work on a CPU too — and <span class="dz-ai xs"><b>Dez</b><i>AI</i></span> needs them less as it learns. Without Ollama the studio still works.</p></div></details>
+      <details class="reveal" name="faq"><summary>Can the AI learn something wrong?</summary>
+        <div class="ans"><p>Learning has to prove itself first: a model or a rule acts only after it was right on files it was not trained on, a learned rule that people keep undoing is retired by itself, and what your team decides in a file counts more than any AI answer. An admin can switch each part off.</p></div></details>
+      <details class="reveal" name="faq"><summary>Can many people work at the same time?</summary>
+        <div class="ans"><p>Yes. The queue serves each person in turn and runs several files at once; in a file one person edits while the others watch, so nobody’s work is overwritten. An admin sees who works on what, and for how long.</p></div></details>
+      <details class="reveal" name="faq"><summary>Which PDFs does it handle?</summary>
+        <div class="ans"><p>Journal articles, books, reports exported from Word or InDesign, forms, worksheets, and files that already have tags — which can be imported as they are. Scanned pages get a text layer when Tesseract is installed.</p></div></details>
+      <details class="reveal" name="faq"><summary>Which languages?</summary>
+        <div class="ans"><p>Any text in Unicode — Tamil, Greek, accented Latin and more — is read and tagged, with the language set for each passage so assistive technology can switch voice. The languages OCR can read depend on the Tesseract language packs you install.</p></div></details>
+      <details class="reveal" name="faq"><summary>Can we follow a client’s house style?</summary>
+        <div class="ans"><p>Yes. A profile holds a client’s options, the client’s approved PDFs teach <span class="dz-ai xs"><b>Dez</b><i>AI</i></span> their conventions, and a client can have a tag structure of its own.</p></div></details>
+      <details class="reveal" name="faq"><summary>Can it run in batches or from scripts?</summary>
+        <div class="ans"><p>Yes: upload files in the browser (an admin can upload a whole folder), or use the command line — with a profile, options, a check-only mode that returns an error code, and a batch summary workbook.</p></div></details>
     </div>
   </div>
 </section>
@@ -350,6 +664,7 @@ setTimeout(function () { if (!window.__dzOK) document.documentElement.classList.
   </div>
 </footer>
 
+<button type="button" class="dz-top" id="dzTop" aria-label="Back to the top" title="Back to the top"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
 <script src="{{ url_for('static', filename='landing.js') }}?v={{ asset_v }}"></script>
 </body>
 </html>

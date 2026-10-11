@@ -57,7 +57,7 @@ from core.locks import FairRLock, replace_file
 from core.preflight import tesseract_info
 from core.report import write_batch_summary
 
-VERSION = "4.31.0"
+VERSION = "4.32.0"
 BASE = os.path.dirname(os.path.abspath(__file__))
 JOBS = os.environ.get("PDFUA_JOBS", os.path.join(BASE, "jobs"))
 CONFIG_PATH = os.environ.get("PDFUA_CONFIG", os.path.join(BASE, "config.json"))
@@ -336,7 +336,27 @@ def login():
             ACCOUNTS.log(u["username"], "signed in")
             return redirect(nxt)
     return render_template("login.html", error=err, next=nxt, version=VERSION, year=datetime.now().year,
-                           fresh=bool(request.args.get("fresh")))
+                           fresh=bool(request.args.get("fresh")), facts=site_facts())
+
+
+_FACTS: dict = {}
+
+
+def site_facts() -> dict:
+    """The numbers the front page quotes about the tool (V4.32) — counted in the tool itself, so a page that says
+    "58 machine checks" can never be out of date: the checks are the `UA-…` rules of core/checker.py and
+    core/pipeline.py, the options and profiles are the tool's own lists. (A copy that ships without its sources says
+    58, the count of this release; tests/front_facts_test.py checks the page against the sources.)"""
+    if not _FACTS:
+        codes: set = set()
+        for name in ("checker.py", "pipeline.py"):
+            try:
+                with open(os.path.join(BASE, "core", name), encoding="utf-8") as fh:
+                    codes |= set(re.findall(r'"(UA-[A-Z0-9]+)"', fh.read()))
+            except OSError:
+                pass
+        _FACTS.update(checks=len(codes) or 58, options=len(META), profiles=len(BUILTIN_PROFILES), undo=HISTORY_LIMIT)
+    return _FACTS
 
 
 @app.route("/logout")

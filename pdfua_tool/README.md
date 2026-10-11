@@ -1,4 +1,4 @@
-# Dezquare PDF Accessibility Studio v4.31.0
+# Dezquare PDF Accessibility Studio v4.32.0
 
 Automated PDF/UA-1 tagging plus an Acrobat-style manual tag editor.
 
@@ -1379,7 +1379,7 @@ python tests/zonelearn_test.py         # V4.28.0 where zones are cut, learned fr
 python tests/zonelearn_app_test.py     # V4.28.0 one cut by hand → the same cut offered elsewhere in the file → learned live by a learner process → approved → the next file is right
 python tests/multiuser_test.py         # V4.28.0 many people at once: the lock, the fair queue, config.json, who else is in the file, no lost change (PDFUA_LOCK_AUDIT=1)
 python tests/filelock_test.py          # V4.29.0 one person at a time in a file: the others look, every change is refused (423), take over, let go, expiry, the switch
-python app.py & python tests/ui_front_test.py    # V4.29.0 the front page in a browser: the demo, the moving parts and their pause, light / dark, a phone, signing in
+python app.py & python tests/ui_front_test.py    # V4.29.0 the front page in a browser: the demo, the moving parts and their pause, light / dark, a phone, signing in (V4.32.0: and the new parts — the teacher's story, the preview, the checks, the questions)
 python app.py & python tests/ui_lock_test.py     # V4.29.0 two people, one file, in two browsers: view only, take over, let go, leaving
 python tests/patch_test.py             # V4.30.0 what an edit changed is written, told and shown: the patches equal a new load after 26 kinds of change, the file is exactly the tags, 304 / gzip, the lists of files
 python tests/perf_test.py              # V4.30.0 speed: a file of 4 000 tags edited in tens of milliseconds, the heartbeat answers during edits, 1 500 files listed in a blink and with a 304
@@ -1387,6 +1387,7 @@ python tests/worktime_test.py          # V4.30.0 working time: only active secon
 python tests/rights_test.py            # V4.30.0 rights: role defaults, Allow / Deny, refused on the server with the reason, see all, take over, who spent the time
 python app.py & python tests/ui_admin_test.py    # V4.30.0 Admin in a browser: filters and chips, Reset, views kept, the working time, the Rights dialog, Time, Workflow, Activity
 python app.py & python tests/ui_users_test.py    # V4.30.0 the Users page: filters, chips and Reset, rows kept between draws, 150 rows at a time, the upload chips, the person's time
+python tests/front_facts_test.py     # V4.32.0 the front page tells only what the tool can show: its numbers are counted in the tool, the before → after table is measured again, nothing leaves the network, the page is built as the PDFs it asks for
 python tests/teacher_test.py           # V4.31.0 Ollama teaches Dez AI: lessons, answers alone, proven students and audits, people outrank the teacher, Ollama off, the Admin API
 python app.py & python tests/ui_teacher_test.py   # V4.31.0 Admin → Dez AI → Ollama teaches Dez AI in a browser: the card, Study now, levels, switches, lessons, forget
 python app.py & python tests/ui_zone_test.py     # V4.28.0 a zone cut by hand → the offer “Cut all N”, Admin → System and Dez AI
@@ -2864,3 +2865,66 @@ built and an approved file; the examples in Ollama's question; four processes wr
 a production user; the editor's helpers saying who answered), `tests/ui_teacher_test.py` (the card in a browser: a row for every kind of
 question, the tiles, Study now → a proven student, a level held back and kept after a reload, the switches and numbers, a task's lessons
 opened and forgotten).
+
+
+---
+
+**V4.32.0 — A front page that shows everything the studio can do — and can prove every word of it.**
+
+The sign-in page is what a client sees first, so it now answers the questions a client asks before they start: *why this studio, what
+exactly does it do, how sure can we be, what do we get, what does it cost us in time, where do our files go?* Each answer is a part of
+the page, in this order: the sign-in and the demo → **Why clients choose us** → Dez AI and the zone story → **Ollama teaches, Dez AI
+remembers** → the numbers → the features → **every kind of content** → **the screen-reader preview** → **the standards** → **what
+lands on your client's desk** → how it works → the teams → **what changes** (a table) → privacy → **the questions clients ask** →
+a last call. The menu has eight entries and lights the part on the screen; a thin bar shows how far down the page you are, and a
+button takes you back up.
+
+* **Why clients choose us.** Six reasons, each with its proof: right the first time (Dez AI proposes the whole structure, the doubtful
+  tags are listed first) · checked on every build (the machine checks, veraPDF when installed, the report says what is left for a
+  person) · fast for one, fair for many (300 pages in under a minute on a multi-core server; the queue serves each person in turn) ·
+  your files never leave (the guard refuses every connection outside the network, and logs it) · it learns each client's house style
+  · proof for the client (the PDF, the Excel report, the history of who did what and for how long).
+* **Ollama teaches. Dez AI remembers.** A small story that moves when it is scrolled to: a question goes to Ollama, the answer comes
+  back and travels to Dez AI as a lesson, the share of questions Dez AI answers alone climbs (0 → 78 %), the lessons kept and the
+  waiting time saved grow. Beside it: *proven, not trusted* (a student answers alone only after it agrees with its teacher on questions
+  it has not seen, and is checked now and then) · *people outrank both* · *your studio's own words* (the examples Dez AI shows the
+  teacher). The page says it is an illustration; the real numbers are on Admin → Dez AI.
+* **Every kind of content** — sixteen tiles: headings, columns and reading order, lists, tables, figures and alt text, captions and
+  footnotes, links and cross-references, contents and index, reference lists, mathematics, forms, running heads and page numbers,
+  worksheets, scanned pages, many languages, colour contrast. Each is something the README describes and a test shows.
+* **The screen-reader preview.** A page is read block by block and what a screen reader would announce appears beside it (heading level
+  1, the text, the picture's description, a table with 3 columns, a column header, a list with 3 items, a link with its description).
+* **The standards.** *{N} machine checks* — the number is **counted in the tool**: every `UA-…` rule of `core/checker.py` and
+  `core/pipeline.py` (`app.site_facts()`, also the options, the built-in profiles and the undo steps the page quotes), so the page cannot
+  say 58 when the tool has 60. Fourteen things the checks look at tick one by one. **Checker errors on our reference files, before and
+  after the automatic pass** — six files, drawn as bars: the journal article 9 → 1, the book 6 → 0, the form 9 → 0, the attendance register
+  6 → 0, Tamil and Greek text 6 → 0, rotated pages 9 → 1 (the one left is a picture whose description a person approves). They are the
+  numbers `tests/run_suite.py` prints. And **an honest note**: a machine check is not a conformance certificate — confirm in PAC 2024
+  and veraPDF.
+* **What lands on the client's desk**: the accessible PDF (its pages pixel-identical to the original), the Excel report, the veraPDF and
+  PAC verdict, the story of the file. **What changes** compares tagging by hand with the studio in eight rows (a real table, with a
+  caption and row and column headers). **Nine questions** (certified? where do the files go? what do we need — is a GPU required? can
+  the AI learn something wrong? many people at once? which PDFs and languages? house styles? batches and scripts?), answered with the
+  limits, one open at a time (`<details>`, so the keyboard works without a script).
+* **Every claim has its proof.** Nothing on the page is a testimonial, a logo, a certificate or a promise: the numbers come from the
+  tool, the README or a measurement, and the sentences that were bigger than their proof were made smaller (“300 pages in under a
+  minute”, as this README says; “a file of 4,000 tags”, as `tests/perf_test.py` builds; no talk of prices; no “certified”).
+* **Built as the PDFs it asks for.** One `h1`, no heading level skipped, every part named by its heading (`aria-labelledby`), a skip
+  link, a real table, nothing written into the HTML as a handler, nothing loaded from another server (the Content-Security-Policy is
+  unchanged). The new moving pictures follow the same rules as the old ones: the **pause** button and the computer's “less motion” stop
+  them and show how they end; they start only when seen and stop when they leave; on a phone the sign-in still comes first.
+
+*Honest limits.* The page is an illustration of what the studio does, not a recording; its “300 pages in under a minute” is the figure
+this README gives for a multi-core test machine, not a promise for every server; “10 built-in profiles” and “100+ options” are counts
+of the tool today; the before → after numbers are for the reference files of `tests/corpus`, not for yours.
+
+Checked: every test suite of V4.31 passes as it was; new `tests/front_facts_test.py` (no server needed: the machine checks, options,
+profiles and undo steps on the page are the tool's own; the four workflow steps, the zoom, the password hashing, “300 pages in under a
+minute” and “4,000 tags” are what the code, this README and `tests/perf_test.py` say; a connection to a public address is refused before
+a byte is sent and the guard logs it, and the page's Content-Security-Policy lets it talk to its own server only; the six reference files
+are run through the studio again and must give the numbers and bars on the page, each being what its label says; one `h1`, no skipped
+level, every link finds its part, no id twice, every `aria-labelledby` finds its heading, a real table, no handler in the HTML, nothing
+loaded from another server, every id the script looks for is on the page; no testimonial, certificate or guarantee), and a longer
+`tests/ui_front_test.py` (in a browser: the six reasons, the teacher's story moving and growing, the preview reading line after line and
+lighting its block, the checks ticking and the bars filling, the table, the questions — one open at a time, also by keyboard — the
+progress bar and the way back up, paused and with less motion: everything shown as it ends, a phone: nothing wider than the screen).

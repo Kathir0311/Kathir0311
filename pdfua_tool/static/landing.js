@@ -1,4 +1,4 @@
-/* The front page (V4.29): the moving parts — a net of tags in the background, the tagging demo, Dez AI's orb
+/* The front page (V4.29, more in V4.32): the moving parts — a net of tags in the background, the tagging demo, Dez AI's orb
    and its speech bubble, the zone-learning story, the team lane, numbers that count up, things that come up as
    they are scrolled to — and the sign-in form. Nothing is loaded from the internet. The computer's "less motion"
    setting, and the pause button in the header, stop everything that moves: the pictures then show how they end. */
@@ -45,7 +45,7 @@
   paintStill();
 
   /* ------------------------------------------------------------------ things come up as they are scrolled to */
-  const SIBLINGS = '.dz-caps,.dz-feats,.dz-flow,.dz-stats,.dz-steps3,.dz-chips,.dz-ticks';
+  const SIBLINGS = '.dz-caps,.dz-feats,.dz-flow,.dz-stats,.dz-steps3,.dz-chips,.dz-ticks,.dz-adv,.dz-tiles,.dz-pack,.dz-faq';
   $$(SIBLINGS).forEach((ul) => $$(':scope > .reveal', ul).forEach((li, i) => li.style.setProperty('--rd', (i * 0.07).toFixed(2) + 's')));
   $$('.dz-copy .reveal').forEach((el, i) => el.style.setProperty('--rd', (i * 0.09).toFixed(2) + 's'));
   const reveal = $$('.reveal');
@@ -371,6 +371,117 @@
     loop();
   })();
 
+  /* ------------------------------------------------------------------ V4.32: Ollama teaches Dez AI — the lessons story */
+  (function lessons() {
+    const box = $('#dzLessons');
+    if (!box) return;
+    const q = $('#lzQ'), a = $('#lzA'), pct = $('#lzPct'), bar = $('#lzBar'), n = $('#lzN'), st = $('#lzS'), tm = $('#lzT');
+    const STEPS = [
+      { q: 'Is row 1 of this table a header?', a: 'Yes — I have seen 3 tables like it.', p: 12, n: 60, s: 0, t: 4 },
+      { q: 'What should this link say instead of “click here”?', a: 'I remember: “Download the scoring guide (PDF)”.', p: 31, n: 210, s: 1, t: 22 },
+      { q: 'Does this table go on over the page break?', a: 'Yes — the header repeats. I am 97 % sure.', p: 49, n: 480, s: 2, t: 61 },
+      { q: 'Which line starts a new reference entry?', a: 'The lines that begin “Surname, X.” — 1, 4 and 7.', p: 66, n: 820, s: 4, t: 118 },
+      { q: 'What is this picture?', a: 'The publisher’s logo — I described it before.', p: 78, n: 1240, s: 5, t: 190 }];
+    const ZERO = { p: 0, n: 0, s: 0, t: 0 };
+    const mins = (m) => m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
+    let cur = { ...ZERO }, my = 0;
+    function paint(v) {
+      pct.textContent = Math.round(v.p) + ' %'; bar.style.width = v.p.toFixed(1) + '%';
+      n.textContent = Math.round(v.n).toLocaleString('en-US'); st.textContent = String(Math.round(v.s)); tm.textContent = mins(Math.round(v.t));
+    }
+    function tween(to, ms, id) {
+      const from = { ...cur }, t0 = performance.now();
+      return new Promise((done) => (function tick(t) {
+        if (id !== my) return done();
+        const k = Math.min(1, (t - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+        cur = { p: from.p + (to.p - from.p) * e, n: from.n + (to.n - from.n) * e, s: from.s + (to.s - from.s) * e, t: from.t + (to.t - from.t) * e };
+        paint(cur);
+        if (k < 1) requestAnimationFrame(tick); else done();
+      })(t0));
+    }
+    async function swap(el, text) { el.classList.add('swap'); await wait(260); el.textContent = text; el.classList.remove('swap'); }
+    async function loop() {
+      const id = ++my;
+      if (still()) { const l = STEPS[STEPS.length - 1]; q.textContent = l.q; a.textContent = l.a; q.classList.remove('swap'); a.classList.remove('swap'); cur = { ...l }; paint(cur); return; }
+      cur = { ...ZERO }; paint(cur); a.classList.remove('swap');
+      let i = 0;
+      while (id === my) {
+        if (!visible.has(box)) { await wait(500); continue; }
+        const k = i % STEPS.length, s = STEPS[k];
+        if (k === 0 && i) { cur = { ...ZERO }; paint(cur); }
+        a.classList.add('swap');                                  // the last answer goes with its question
+        await swap(q, s.q); if (id !== my) return;
+        await wait(650); if (id !== my) return;
+        await swap(a, s.a); if (id !== my) return;
+        await tween(s, 900, id); if (id !== my) return;
+        await wait(k === STEPS.length - 1 ? 3600 : 2100);
+        i++;
+      }
+    }
+    onView(box, () => {}, null, 0.3);
+    document.addEventListener('dz-motion', loop);
+    loop();
+  })();
+
+  /* ------------------------------------------------------------------ V4.32: the screen-reader preview */
+  (function listen() {
+    const box = $('#dzSR');
+    if (!box) return;
+    const lines = $$('.sr-lines li', box), blocks = $$('.sr-page .b', box);
+    let my = 0;
+    function paint(k) {
+      lines.forEach((li, i) => { li.classList.toggle('on', i <= k); li.classList.toggle('now', i === k); });
+      blocks.forEach((b) => b.classList.toggle('on', k >= 0 && Number(b.dataset.n) === Number(lines[k].dataset.b)));
+    }
+    async function loop() {
+      const id = ++my;
+      if (still()) { lines.forEach((li) => { li.classList.add('on'); li.classList.remove('now'); }); blocks.forEach((b) => b.classList.remove('on')); return; }
+      paint(-1);
+      while (id === my) {
+        if (!visible.has(box)) { await wait(500); continue; }
+        for (let k = 0; k < lines.length && id === my; k++) { paint(k); await wait(1500); }
+        if (id !== my) return;
+        await wait(2400); if (id !== my) return;
+        paint(-1); await wait(700);
+      }
+    }
+    onView(box, () => {}, null, 0.3);
+    document.addEventListener('dz-motion', loop);
+    loop();
+  })();
+
+  /* ------------------------------------------------------------------ V4.32: the checks tick, the bars fill */
+  (function proof() {
+    const list = $('#dzChecks'), ba = $('#dzBA');
+    if (list) {
+      $$('li', list).forEach((li, i) => li.style.setProperty('--i', i));
+      onView(list, () => list.classList.add('go'), null, 0.2);
+    }
+    if (ba) {
+      $$('li', ba).forEach((li, i) => li.style.setProperty('--r', i));
+      onView(ba, () => ba.classList.add('go'), null, 0.3);
+    }
+  })();
+
+  /* ------------------------------------------------------------------ V4.32: the questions — one answer open at a time */
+  (function faq() {
+    const items = $$('.dz-faq details');
+    items.forEach((d) => d.addEventListener('toggle', () => { if (d.open) items.forEach((o) => { if (o !== d && o.open) o.open = false; }); }));
+  })();
+
+  /* ------------------------------------------------------------------ V4.32: how far down the page, and the way back up */
+  (function progress() {
+    const bar = $('#dzProg'), top = $('#dzTop');
+    function upd() {
+      const h = document.documentElement.scrollHeight - innerHeight;
+      const p = h > 0 ? Math.min(1, scrollY / h) : 0;
+      if (bar) bar.style.transform = `scaleX(${p.toFixed(4)})`;
+      if (top) top.classList.toggle('on', scrollY > innerHeight * 1.2);
+    }
+    addEventListener('scroll', upd, { passive: true }); addEventListener('resize', upd); upd();
+    if (top) top.addEventListener('click', () => { scrollTo({ top: 0, behavior: still() ? 'auto' : 'smooth' }); const b = $('#dzNavSign'); if (b) b.focus({ preventScroll: true }); });
+  })();
+
   /* ------------------------------------------------------------------ small things that wake up when seen */
   onView($('#dzFlow'), () => $('#dzFlow').classList.add('go'), null, 0.4);
   onView($('.dz-shield'), () => $('.dz-shield').classList.add('in'), null, 0.4);
@@ -380,10 +491,14 @@
   (function spy() {
     const links = $$('.dz-links a');
     if (!('IntersectionObserver' in window)) return;
+    // the parts that belong to the one in the menu (V4.32)
+    const group = { teacher: 'dezai', learn: 'dezai', content: 'features', listen: 'features', delivery: 'standards', how: 'teams', compare: 'teams' };
     const io = new IntersectionObserver((es) => es.forEach((e) => {
-      if (e.isIntersecting) links.forEach((a) => a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id));
+      const id = group[e.target.id] || e.target.id;
+      if (e.isIntersecting) links.forEach((a) => a.classList.toggle('on', a.getAttribute('href') === '#' + id));
     }), { rootMargin: '-45% 0px -50% 0px' });
-    links.forEach((a) => { const s = $(a.getAttribute('href')); if (s) io.observe(s); });
+    const seen = new Set([...links.map((a) => a.getAttribute('href').slice(1)), ...Object.keys(group)]);
+    seen.forEach((id) => { const s = $('#' + id); if (s) io.observe(s); });
   })();
 
   /* ------------------------------------------------------------------ links to a part of the page */
