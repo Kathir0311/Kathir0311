@@ -1,4 +1,4 @@
-# Dezquare PDF Accessibility Studio v4.32.2
+# Dezquare PDF Accessibility Studio v4.33.0
 
 Automated PDF/UA-1 tagging plus an Acrobat-style manual tag editor.
 
@@ -1387,6 +1387,8 @@ python tests/worktime_test.py          # V4.30.0 working time: only active secon
 python tests/rights_test.py            # V4.30.0 rights: role defaults, Allow / Deny, refused on the server with the reason, see all, take over, who spent the time
 python app.py & python tests/ui_admin_test.py    # V4.30.0 Admin in a browser: filters and chips, Reset, views kept, the working time, the Rights dialog, Time, Workflow, Activity
 python app.py & python tests/ui_users_test.py    # V4.30.0 the Users page: filters, chips and Reset, rows kept between draws, 150 rows at a time, the upload chips, the person's time
+python tests/priority_test.py        # V4.33.0 the worker that analyses or builds a file runs below the web server's priority (a person editing comes first)
+python app.py & python tests/ui_tree_test.py $OUT $PDFUA_JOBS   # V4.33.0 the tag tree of a file of ~6 000 tags in a browser: a window of rows, the scroll bar of the whole list, no picture held up, keys, search, select all, a click on the page, collapse/expand
 python tests/model_integrity_test.py # V4.32.2 Build PDF never stops on a table or a row that is already gone; a fuzz of the editor's operations: after each one the tags are still a tree, and a file built from the result builds
 python tests/front_facts_test.py     # V4.32.0 the front page tells only what the tool can show: its numbers are counted in the tool, the before → after table is measured again, nothing leaves the network, the page is built as the PDFs it asks for (V4.32.1: no product name of the model service on the page)
 python tests/teacher_test.py           # V4.31.0 Ollama teaches Dez AI: lessons, answers alone, proven students and audits, people outrank the teacher, Ollama off, the Admin API
@@ -2983,3 +2985,51 @@ operations of the editor (roles, delete, wrap, lists, rows, merge, move, drop, l
 zones drawn and deleted, geometry, split, rebuild, reading order …) over four files: after each, the tags are a tree (none out of it,
 none hung twice, every parent right), nothing stops, and a file built from the result builds. It fails on V4.32.1 and passes now;
 every other suite passes as it did.
+
+
+---
+
+**V4.33.0 — The editor stays quick in a big file: scrolling the tag tree, creating a tag.**
+
+*What was reported.* “The tool is getting heavier — even scrolling is slow, like it is hanging, and sometimes creating a tag keeps loading.”
+
+*What was measured* (a 300-page test book of **15 775 tags**, Chromium; the numbers are from a machine without a graphics card, so
+what counts is how many times slower, not the seconds):
+
+| | before | now |
+|---|---|---|
+| elements in the page (the tag tree) | 80 284 | 1 417 |
+| scrolling the tree with the wheel, a picture takes | **167 ms** (6 a second; every one over 100 ms) | **16.7 ms** (60 a second; none over 20 ms) |
+| the browser's layout work during 40 wheel steps | 2 997 ms | 88 ms |
+| the editor shows its first tag after | 1.7 s | 0.4 s |
+
+*Why.* The tag tree was **every tag of the file in the page** — 15 775 rows, five elements each. At every wheel step the browser laid
+the rows out again (each time a few more came into view, and every row's height changed the height of all of them), tested which one
+the pointer was over, and kept an intersection observer for each (`content-visibility`, added in V4.30, which hid the cost of the
+painting but not of the layout). A file of 3 000 tags was already at 50 ms a picture. Nothing in the script was slow: it was the size of
+the page.
+
+*What changed.*
+* **The tag tree is a window** (`renderWindow` in `static/editor.js`). Every row is exactly 30 px high, so where a row is, is a sum:
+  only the rows near the screen (and 24 above and below) are in the page, between two spacers that keep the scroll bar as long as
+  the whole list. A list of 250 rows or fewer is shown whole, as before. The rows are made while you scroll (one picture per
+  frame, nothing while the screen is well inside the rows that are there). What reaches for a row that is not in the page —
+  the arrow keys, a click on a box of the page, the issues, *Select all shown*, the search — goes by the list (`flat`), not by the
+  page: the tree scrolls to the row and the row is made. Screen readers hear the place in the whole tree (`aria-posinset`,
+  `aria-setsize`).
+* **Analysis and build run below the web server's priority** (`core/jobrunner.py`, `PDFUA_JOB_NICE`, default 8, 0 leaves it): the
+  worker that reads or builds a file — and the page processes it starts — no longer take the CPU from a person creating a tag or
+  clicking while five files are read on four cores. On an idle machine nothing is slower. (Windows: below normal priority.)
+* A long **Issues list** is drawn 300 at a time (“Show 300 more”).
+* Measured and found fine: the page picture at 100–400 % (60 pictures a second), the Issues list of 1 900 issues, the Links list
+  (400 at a time), the idle editor (0 % of a core), a file's tags in the first request (1 MB with gzip for 15 775 tags).
+
+*Honest limits.* Creating a tag in the 15 775-tag file takes 0.5 s on the server (the page's lines are read again, the reading numbers
+are made again); creating a **table, list or figure with the AI** waits for the language model — on a machine without a graphics card
+that is tens of seconds, and it is the model, not the editor, that takes the time. A file of 100 000 tags would still need its
+first request (10 MB of tags) to be cut up.
+
+Checked: new `tests/ui_tree_test.py` (a file of ~6 000 tags in a browser: a few dozen rows and elements in the page, the scroll bar of
+the whole list, wheel scrolling with no held-up picture, the middle and the end of the list, 70 × ↓ and 30 × ↑ with the row always on the
+screen, a search for one tag in 6 000, *Select all shown*, a click on a box far down the list, collapse and expand, a change of type
+in its row — it hangs on V4.32.2 at *Select all shown*) and `tests/priority_test.py`; every other suite passes as it did.

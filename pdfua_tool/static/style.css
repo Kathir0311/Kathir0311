@@ -1610,9 +1610,12 @@ button.linkish{border:0;background:none;color:var(--accent);padding:0 2px;font-s
 
 
 /* ===== V4.30: a big file stays quick ===== */
-/* the rows of the tag tree that are off the screen are not laid out or painted until they are scrolled to */
-.tree .node{content-visibility:auto;contain-intrinsic-size:auto 26px}
-.tree{contain:content}
+/* V4.33: the tag tree is a window (editor.js renderWindow): only the rows near the screen are in the page, between two spacers.
+   Every row is exactly 30px high (the 1px gap above and below it is a transparent border, not a margin — margins of
+   neighbours collapse, and the sum would be wrong), so where a row is, is a sum (ROW_H in editor.js). */
+.tree .node{height:30px;min-height:0;box-sizing:border-box;margin:0 2px;border-top:1px solid transparent;border-bottom:1px solid transparent;background-clip:padding-box;overflow:hidden}
+.tree .vsp{flex:none;pointer-events:none}
+.tree{contain:content;overscroll-behavior:contain}
 .workchip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:3px 9px;border-radius:999px;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);white-space:nowrap;cursor:default;font-variant-numeric:tabular-nums}
 .workchip.paused{color:var(--muted);border-style:dashed}
 

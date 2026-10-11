@@ -57,7 +57,7 @@ from core.locks import FairRLock, replace_file
 from core.preflight import tesseract_info
 from core.report import write_batch_summary
 
-VERSION = "4.32.2"
+VERSION = "4.33.0"
 BASE = os.path.dirname(os.path.abspath(__file__))
 JOBS = os.environ.get("PDFUA_JOBS", os.path.join(BASE, "jobs"))
 CONFIG_PATH = os.environ.get("PDFUA_CONFIG", os.path.join(BASE, "config.json"))

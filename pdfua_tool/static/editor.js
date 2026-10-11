@@ -73,8 +73,10 @@
   let tool = 'select';
   let stage = 'tags';          // tags | links (V4.18: the Links stage, static/links.js)
   let orderClicks = [];
-  let flat = [];
-  let rowOf = {};
+  let flat = [];               // the ids of the rows the tree shows, in order (V4.33: all of them; only the rows near the screen are in the page)
+  let flatMeta = [];           // for each: [depth, has children, collapsed] — what its row is made from
+  let flatAt = {};             // id → its place in `flat`
+  let rowOf = {};              // id → its row, for the rows that are in the page now
   let collapsed = new Set();
   let contrast = null;         // {available, summary, issues[]}
   let workVer = Date.now() % 100000;   // bumps when colours in the working PDF change
@@ -261,8 +263,7 @@
     sel.value = [...sel.options].some((o) => o.value === keep) ? keep : '';
   }
   function shownIds() {
-    return [...document.querySelectorAll('#tree [role=treeitem]')].map((r) => r.dataset.id)
-      .filter((id) => model.nodes[id]);
+    return flat.filter((id) => model.nodes[id]);
   }
 
   // V4.30: a row is made again only when what it shows changed (its signature); the others stay in the page as they are,
@@ -303,6 +304,76 @@
     row._sig = v.sig;
     return row;
   }
+  // V4.33: the tree is a window. A book of 15 000 tags used to be 15 000 rows (80 000 elements) in the page, and the browser
+  // laid them out and hit-tested them at every wheel step — 6 pictures a second. Now `flat` lists every row and only the
+  // rows near the screen (and a margin above and below) are in the page, between two spacers that keep the scroll bar true.
+  // Every row is exactly ROW_H high (css: .tree .node), so where a row is, is a sum. A short list is shown whole.
+  const ROW_H = 30, ROW_OFF = 4, TREE_PAD = 8, VIRT_MIN = 250, OVERSCAN = 24;      // (a row: 30px with its 1px borders; the tree has 4px padding)
+  const topSp = el('div', { class: 'vsp', 'aria-hidden': 'true' }), botSp = el('div', { class: 'vsp', 'aria-hidden': 'true' });
+  treeEl.replaceChildren(topSp, botSp);
+  let winA = 0, winB = 0, winN = -1;
+  function visibleRows(n) {
+    const h = treeEl.clientHeight || 600;
+    const top = Math.min(treeEl.scrollTop, Math.max(0, n * ROW_H + TREE_PAD - h));       // (the list may just have got shorter than where we are)
+    return [Math.max(0, Math.floor((top - ROW_OFF) / ROW_H)), Math.ceil((top + h - ROW_OFF) / ROW_H)];
+  }
+  function renderWindow(force) {
+    const n = flat.length;
+    let a = 0, b = n;
+    if (n > VIRT_MIN) {
+      const [first, last] = visibleRows(n);
+      // while scrolling: nothing to do as long as the screen is well inside the rows that are there
+      if (!force && n === winN && first >= winA + 6 && last <= winB - 6) return;
+      a = Math.max(0, first - OVERSCAN);
+      b = Math.min(n, last + OVERSCAN);
+    }
+    const prev = rowOf, next = {}, wanted = [];
+    for (let i = a; i < b; i++) {
+      const id = flat[i], m = flatMeta[i];
+      const v = rowView(model.nodes[id], m[0], m[1], m[2]);
+      let row = prev[id];
+      if (!row || row._sig !== v.sig) row = buildRow(id, v);
+      row.classList.toggle('sel', sel.has(id));
+      row.classList.toggle('focus', id === focus);
+      row.setAttribute('aria-posinset', i + 1);                     // (a screen reader hears where it is in the whole tree)
+      row.setAttribute('aria-setsize', n);
+      next[id] = row;
+      wanted.push(row);
+    }
+    rowOf = next;
+    for (const id in prev) if (next[id] !== prev[id]) prev[id].remove();      // rows that left the window or were made again
+    if (topSp.parentNode !== treeEl) treeEl.replaceChildren(topSp, botSp);
+    let ref = topSp.nextSibling;
+    for (const row of wanted) {
+      if (row === ref) ref = ref.nextSibling;
+      else treeEl.insertBefore(row, ref);
+    }
+    while (ref && ref !== botSp) { const nx = ref.nextSibling; ref.remove(); ref = nx; }      // what is left over (the "nothing matches" line …)
+    topSp.style.height = (a * ROW_H) + 'px';
+    botSp.style.height = ((n - b) * ROW_H) + 'px';
+    if (!n) botSp.before(el('p', { class: 'muted small', style: 'padding:10px', text: 'Nothing matches.' }));
+    winA = a; winB = b; winN = n;
+    if (n > VIRT_MIN) {                                              // a list that got shorter: the screen goes to its end, now
+      const maxTop = Math.max(0, n * ROW_H + TREE_PAD - (treeEl.clientHeight || 600));
+      if (treeEl.scrollTop > maxTop) treeEl.scrollTop = maxTop;
+    }
+  }
+  let treeRaf = 0;
+  treeEl.addEventListener('scroll', () => {
+    if (treeRaf || flat.length <= VIRT_MIN) return;
+    treeRaf = requestAnimationFrame(() => { treeRaf = 0; renderWindow(false); });
+  }, { passive: true });
+  if (window.ResizeObserver) new ResizeObserver(() => { if (model) renderWindow(true); }).observe(treeEl);
+  // a row, brought on to the screen (it may not be in the page yet)
+  function revealRow(id) {
+    const i = flatAt[id];
+    if (i === undefined) return;
+    const top = ROW_OFF + i * ROW_H, bottom = top + ROW_H, st = treeEl.scrollTop, h = treeEl.clientHeight || 600;
+    if (top < st + 2) treeEl.scrollTop = Math.max(0, top - 2);
+    else if (bottom > st + h - 2) treeEl.scrollTop = bottom - h + 2;
+    renderWindow(true);
+  }
+
   function renderTree() {
     const f = $('filter').value;
     const rf = ($('roleFilter') || {}).value || '';
@@ -329,37 +400,23 @@
         }
       }
     }
-    const prev = rowOf;
-    const next = {};
-    const wanted = [];
     flat = [];
+    flatMeta = [];
+    flatAt = {};
     const walk = (id, depth) => {
       const n = model.nodes[id];
       if (!n) return;
       if (n.artifact && !showArt) return;
       if (include && !include.has(id)) return;
+      flatAt[id] = flat.length;
       flat.push(id);
       const hasKids = n.children.length > 0;
       const isCol = collapsed.has(id) && !include;
-      const v = rowView(n, depth, hasKids, isCol);
-      let row = prev[id];
-      if (!row || row._sig !== v.sig) row = buildRow(id, v);
-      row.classList.toggle('sel', sel.has(id));
-      row.classList.toggle('focus', id === focus);
-      next[id] = row;
-      wanted.push(row);
+      flatMeta.push([depth, hasKids, isCol]);
       if (!isCol) n.children.forEach((c) => walk(c, depth + 1));
     };
     model.roots.forEach((r) => walk(r, 0));
-    rowOf = next;
-    for (const id in prev) if (next[id] !== prev[id]) prev[id].remove();      // rows that are gone or were made again
-    let ref = treeEl.firstChild;
-    for (const row of wanted) {
-      if (row === ref) ref = ref.nextSibling;
-      else treeEl.insertBefore(row, ref);
-    }
-    while (ref) { const nx = ref.nextSibling; ref.remove(); ref = nx; }        // what is left over (the "nothing matches" line …)
-    if (!flat.length) treeEl.append(el('p', { class: 'muted small', style: 'padding:10px', text: 'Nothing matches.' }));
+    renderWindow(true);
     selMarked = new Set(sel);
     focusMarked = focus;
   }
@@ -432,12 +489,11 @@
       const target = pages.length ? (pages.includes(page) ? page : pages[0]) : (n.page >= 0 ? n.page : page);
       if (target !== page) { page = target; renderPage(); }
     }
-    if (!rowOf[focus]) renderTree();
+    if (focus && flatAt[focus] === undefined) renderTree();          // not in the list at all (a collapsed parent, a filter)
     updateSelectionClasses();
     drawBoxes();
     renderInspector();
-    const row = rowOf[focus];
-    if (row) row.scrollIntoView({ block: 'nearest' });
+    if (focus) revealRow(focus);                                      // and into the page, if it was far away
     const box = overlay.querySelector(`.box[data-id="${CSS.escape(focus || '')}"]`);
     if (box && jump) box.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
@@ -2067,14 +2123,20 @@
       text: `Alt text from the caption (${altLeft})`,
       title: 'Figures with no alt text that have a caption printed with them take that caption',
       onclick: fixAltFromCaptions })));
-    issues.forEach((i) => box.append(el('div', {
+    // V4.33: a long list is drawn 300 at a time (a file can have thousands; each one is elements the browser must lay out)
+    issues.slice(0, issuesShown).forEach((i) => box.append(el('div', {
       class: 'issue ' + i.severity, onclick: () => {
         if (i.id) selectOnly(i.id, true);
         else if (i.code === 'title') $('docTitle').focus();
         else if (i.code === 'lang') $('docLang').focus();
       }
     }, el('span', { class: 'pg', text: i.page != null && i.page >= 0 ? 'p' + (i.page + 1) : 'doc' }), el('span', { text: i.message }))));
+    if (issues.length > issuesShown) {
+      box.append(el('div', { class: 'btnrow' }, el('button', { class: 'sm', text: `Show 300 more (${issues.length - issuesShown} left)`,
+        onclick: () => { issuesShown += 300; renderIssues(); } })));
+    }
   }
+  let issuesShown = 300;
   let blankLeft = 0;
   let promptLeft = 0;
   let altLeft = 0;

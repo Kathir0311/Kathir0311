@@ -120,8 +120,30 @@ def run_task(job: str, task: dict, progress: Callable[[float, str], None],
 
 
 # ------------------------------------------------------------------ child
+def lower_priority() -> int:
+    """V4.33: a person editing comes before a file being analysed or built. This process — and the page processes it starts,
+    which inherit it — runs below the web server's priority: on an idle machine nothing is slower, on a busy one the editor
+    (creating a tag, scrolling, a click) is no longer starved by five files being read on every core. PDFUA_JOB_NICE sets how
+    far below (default 8; 0 leaves it as it is). Returns the niceness now."""
+    try:
+        n = int(os.environ.get("PDFUA_JOB_NICE", "8"))
+    except ValueError:
+        n = 8
+    try:
+        if n > 0:
+            if os.name == "nt":
+                import ctypes
+                ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x00004000)   # BELOW_NORMAL
+            else:
+                os.nice(n)
+        return os.nice(0) if os.name != "nt" else n
+    except Exception:
+        return 0
+
+
 def _child(job: str) -> int:
     sys.path.insert(0, BASE)
+    lower_priority()
     real_stdout = sys.stdout
     sys.stdout = sys.stderr            # stray prints go to worker.log
 
